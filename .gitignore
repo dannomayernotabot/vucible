@@ -31,3 +31,23 @@ venv/
 
 # Local AI agent settings
 .claude/settings.local.json
+
+# Next.js
+.next/
+out/
+
+# Vercel
+.vercel/
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
+
+# Yarn (in case anyone tries it)
+.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
