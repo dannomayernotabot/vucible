@@ -139,37 +139,20 @@ src/lib/
 
 ### 6.1 Persistent storage — `localStorage["vucible:v1"]`
 
-```ts
-type Provider = "openai" | "gemini";
-type Tier = "free" | "tier1" | "tier2" | "tier3" | "tier4" | "tier5";
+**Canonical schema is defined in `docs/plans/vucible.md` §5.1.** Do not duplicate the type here — the master plan is the single source of truth and includes fields the wizard doesn't directly touch (`concurrencyCap`, `theme`) but must preserve when writing.
 
-interface ProviderConfig {
-  apiKey: string;
-  tier: Tier;
-  ipm: number;          // detected (OpenAI) or declared-derived (Gemini)
-  validatedAt: string;  // ISO-8601
-}
-
-type AspectRatioConfig =
-  | { kind: "discrete"; ratio: "1:1" | "3:2" | "2:3" | "3:4" | "4:3" | "4:5" | "5:4" | "9:16" | "16:9" | "21:9" }
-  | { kind: "freeform"; width: number; height: number };
-
-interface UserDefaults {
-  imageCount: 4 | 8 | 16;
-  aspectRatio: AspectRatioConfig;
-}
-
-interface VucibleStorageV1 {
-  schemaVersion: 1;
-  providers: Partial<Record<Provider, ProviderConfig>>;
-  defaults: UserDefaults;
-  createdAt: string;
-}
-```
+The wizard writes the **full** `VucibleStorageV1` blob on completion. Initial values:
+- `providers.{openai,gemini}` from validation results
+- `defaults.imageCount` from step 3 selection
+- `defaults.aspectRatio` from step 3 selection (must satisfy the §5.1 aspect invariant: discrete if `providers.gemini` is set)
+- `defaults.theme = "system"` (sensible default; user can change later in Settings)
+- `providers.{openai,gemini}.concurrencyCap = ipm` (default to detected/declared cap; user can adjust later in Settings)
+- `createdAt = new Date().toISOString()`
+- `schemaVersion = 1`
 
 **Read path:** `getStorage()` → returns `null` if absent or invalid JSON; main page treats that as "show wizard."
-**Write path:** `setStorage(s)` writes the full blob (no partial writes; keeps schema integrity simple).
-**Clear path:** `clearStorage()` removes the key; useful for "Clear all keys" in settings (out of scope here but contract is fixed).
+**Write path:** `setStorage(s)` writes the full blob (no partial writes; keeps schema integrity simple). Aspect invariant enforced at this seam (see vucible.md §5.1).
+**Clear path:** `clearStorage()` removes the key; useful for "Clear all keys" in settings (FR-9).
 
 ### 6.2 Wizard scratchpad — `localStorage["vucible:v1.wizard"]`
 
@@ -441,6 +424,8 @@ Centralized in `src/lib/wizard/copy.ts` so non-engineers can edit without touchi
 ## 12. Implementation order (consumed by beads-workflow)
 
 Each item below is a candidate for `br create`. They're sequenced to surface integration risk early (provider clients first, UI second).
+
+> **Relationship to the master plan.** When following `docs/plans/vucible.md` end-to-end, this wizard's Phase 0–2 are subsumed by master Phases 0–2 (master Phase 2 is a superset: it includes `generate()` and `failures.ts`, which the wizard doesn't strictly need but downstream phases do). What's listed below as Phase 3 onwards becomes the work inside master Phase 3 (the "build the wizard" phase). Phase numbering here is preserved for the standalone case where someone wants to ship only the wizard.
 
 ### Phase 0 — Scaffold deps (30 min)
 1. Install missing shadcn primitives: `alert`, `radio-group`, `select`, `separator`, `tooltip`.

@@ -1,7 +1,7 @@
 # Vucible — Master Implementation Plan
 
-> **Status:** Round 2 (external reviewer feedback integrated)
-> **Date:** 2026-04-27
+> **Status:** Round 3 (internal consistency sweep)
+> **Date:** 2026-04-28
 > **Scope:** Entire app, v1. Sits *above* `docs/PRD.md` (the WHAT) and `docs/DESIGN_DECISIONS.md` (the WHY) as the HOW — integration shapes, file paths, data flows, sequencing.
 > **Companion plans:**
 > - `docs/plans/wizard.md` — detailed plan for FR-8 (referenced from §10.2 below; not duplicated here)
@@ -102,10 +102,12 @@ src/
 │   │
 │   ├── round/                 # the live round UI
 │   │   ├── PromptArea.tsx     # prompt input + ModelToggle + AspectPicker + ImageCountPicker
+│   │   ├── useRoundForm.ts    # local useReducer over the prompt form (FR-4 + FR-11 + image count)
 │   │   ├── ModelToggle.tsx    # FR-4
 │   │   ├── ImageCountPicker.tsx
 │   │   ├── AspectRatioPicker.tsx  # shared with wizard/settings (FR-11 / DD-023)
 │   │   ├── GenerateButton.tsx
+│   │   ├── NewSessionButton.tsx   # appears once ≥1 round settled (§10.4 / §14.N)
 │   │   └── CommentaryInput.tsx     # round 2+ optional text
 │   │
 │   ├── grid/                  # FR-5
@@ -144,8 +146,10 @@ src/
 │   │   ├── prompt.ts          # DD-015 prompt template builder (round-2 vs round-N templates)
 │   │   ├── throttle.ts        # per-provider concurrency queue (DD-016)
 │   │   ├── retry.ts           # 3x with Retry-After + exp backoff (DD-019)
-│   │   ├── orchestrate.ts     # top-level: split call slate, fan out, stream results
-│   │   └── failures.ts        # categorize errors → retryable / terminal
+│   │   ├── orchestrate.ts     # split call slate, fan out, stream, settle, batched persist
+│   │   ├── prepare-references.ts  # single-encode shared across N parallel calls (§10.5)
+│   │   ├── image-cache.ts     # ImageCache + ThumbnailCache: refcounted, LRU object-URL lifecycle
+│   │   └── failures.ts        # NormalizedError → user copy + useErrorToast hook + isRetryable/isAuth/isContentBlocked predicates
 │   │
 │   ├── storage/
 │   │   ├── schema.ts          # VucibleStorageV1 + IndexedDB schemas + version
@@ -787,7 +791,7 @@ Acceptance:
 
 `startRoundN(session, selectedRoundId, selections, commentary)`:
 
-1. **Prepare references once, share across all parallel calls.** `prepareReferences(round, selections)`:
+1. **Prepare references once, share across all parallel calls.** `prepareReferences(round, selections)` (in `src/lib/round/prepare-references.ts`):
    - Load `bytes` for each selected `{provider, index}` pair from IndexedDB once.
    - For each reference image, build both shape variants up-front:
      - `Blob` (for OpenAI multipart FormData parts)
@@ -809,7 +813,7 @@ Acceptance:
 
 ### 10.6 FR-4 — Model toggle
 
-`<ModelToggle/>` is a controlled component owned by `<PromptArea/>`. **The full prompt-form state (model toggle + aspect picker + image-count picker + prompt textarea) lives in a `useRoundForm()` custom hook inside `<PromptArea/>`** — `useReducer` over a `RoundFormState` slice. Avoids prop-drilling these tightly coupled controls and avoids polluting `<RoundProvider/>` with form state that doesn't matter to anyone else.
+`<ModelToggle/>` is a controlled component owned by `<PromptArea/>`. **The full prompt-form state (model toggle + aspect picker + image-count picker + prompt textarea) lives in a `useRoundForm()` custom hook in `src/components/round/useRoundForm.ts`** — `useReducer` over a `RoundFormState` slice. Avoids prop-drilling these tightly coupled controls and avoids polluting `<RoundProvider/>` with form state that doesn't matter to anyone else.
 
 When the user clicks "Generate", `<PromptArea/>` calls `roundProvider.startRound(formState.snapshot())` — passing a snapshot, not subscribing. `<RoundProvider/>` only sees the form values at the moment of dispatch.
 
@@ -920,19 +924,20 @@ Output: types and storage utilities with full unit-test coverage. Nothing user-v
 
 Estimate: 2.5 hr (added ULID + invariant enforcement).
 
-### Phase 2 — Provider clients (OpenAI + Gemini wrappers)
+### Phase 2 — Provider clients (OpenAI + Gemini wrappers) + error helpers
 
-Output: `testGenerate`, `listModels`, `generate` functions for both providers, with mocked unit tests + a manual smoke-test script.
+Output: `testGenerate`, `listModels`, `generate` functions for both providers + `errorToMessage` / `useErrorToast` / predicates, with mocked unit tests + a manual smoke-test script.
 
 1. `src/lib/providers/tiers.ts`.
 2. `src/lib/providers/openai.ts` — testGenerate + generate (basic, no references yet).
 3. `src/lib/providers/gemini.ts` — listModels + generate (basic).
 4. `src/lib/providers/openai.ts` — generate with reference images (multipart).
 5. `src/lib/providers/gemini.ts` — generate with reference images (inline parts).
-6. **Manual smoke test** (`scripts/smoke.ts`): run with real keys, verify endpoints, header shapes, and error paths. Resolves §14.A and §14.B.
-7. Unit tests with msw.
+6. `src/lib/round/failures.ts` — `errorToMessage(err, context)`, `useErrorToast()`, `isRetryable`, `isAuthError`, `isContentBlocked` (built here so wizard in Phase 3 can use them).
+7. **Manual smoke test** (`scripts/smoke.ts`): run with real keys, verify endpoints, header shapes, and error paths. Resolves §14.A and §14.B.
+8. Unit tests with msw.
 
-Estimate: 4 hr.
+Estimate: 4.5 hr (added failures.ts).
 
 ### Phase 3 — Setup wizard (FR-8)
 
@@ -970,7 +975,7 @@ Estimate: 3.5 hr (auto-save is simpler than save-button + dirty tracking).
 
 Output: type prompt → click Generate → 16 cards stream in with live progress banner. "New Session" button visible after first round. No selection wiring yet, no round 2.
 
-1. `src/lib/round/throttle.ts` + `retry.ts` + `failures.ts` + `orchestrate.ts` + `image-cache.ts`.
+1. `src/lib/round/throttle.ts` + `retry.ts` + `orchestrate.ts` + `image-cache.ts` (failures.ts already from Phase 2).
 2. `<RoundProvider/>` with a single in-progress round; exposes `{done, total, queued}` derived state.
 3. `useRoundForm()` hook + `<PromptArea/>` (prompt + ModelToggle + AspectRatioPicker + ImageCountPicker + Generate + New Session button).
 4. `<ResultGrid/>` with global progress banner + `<ImageCard/>` (loading + success + error states).
@@ -995,7 +1000,7 @@ Estimate: 6 hr.
 
 Output: history rail with current-session rounds + cross-session list. Read-only on past rounds. Renders thumbnails only — never holds full bytes for non-active rounds.
 
-1. `<HistoryRail/>` + `<RoundCard/>` mini-thumbs (rendered from `Round.results[*].thumbnail`).
+1. `<HistoryRail/>` + `<RoundCard/>` mini-thumbs (rendered from `Round.openaiResults[*].thumbnail` and `Round.geminiResults[*].thumbnail`; full `bytes` never loaded for non-active rounds).
 2. `ThumbnailCache` (sibling of `ImageCache` from Phase 6, same lifecycle pattern).
 3. Cross-session list.
 4. `<ScrollBackPanel/>` read-only view (loads full bytes only for the visible round; releases on scroll-away).
@@ -1044,7 +1049,7 @@ Estimate: 2 hr.
 
 ### Total estimate
 
-~50 hours of focused work for a v1. Realistic calendar time depends on availability, but this is the scoped surface.
+~50 hours of focused work for a v1 (sum of phase estimates: 50.5 hr). Realistic calendar time depends on availability, but this is the scoped surface. Estimates are intentionally optimistic — round 6 (implementation realism check) will pressure-test them.
 
 ---
 
