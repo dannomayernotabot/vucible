@@ -184,6 +184,8 @@ OpenAI test-gen costs ~$0.04 per fire. A user paste-rage-clicking "Validate" mus
 1. The Validate button is disabled the instant the click handler fires — `disabled={isValidating}` plus an early-return guard inside the handler.
 2. The reducer rejects `validate-start` actions for a provider that is already `validating`.
 3. The provider-client `testGenerate(key)` is **not** idempotent across retries (each call costs money). The wizard does NOT auto-retry on transient errors — only the user clicking "Retry" fires another call.
+4. **Mid-validation key edit**: while a `testGenerate` call is in flight, the paste field is `readOnly`. User cannot change the key under a running validation — eliminates the "pasted a new key, prior call returned, ambiguous which key was just validated" race. On error, the field unlocks; on success, the field stays read-only with a "Clear" link to start over.
+5. The in-flight validation has its own `AbortController`. If the user navigates away (closes tab, hits Back) the controller aborts; if the request had already been billed by the provider, it's still billed — we just stop waiting on it. We do NOT auto-resume on remount.
 
 Manually tested in Phase 7 by inserting a 2-second `setTimeout` shim around the button handler and rage-clicking — only one call fires.
 

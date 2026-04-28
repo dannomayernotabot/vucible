@@ -1,6 +1,6 @@
 # Vucible — Master Implementation Plan
 
-> **Status:** Round 4 (adversarial pushback)
+> **Status:** Round 5 (edge case + failure mode sweep)
 > **Date:** 2026-04-28
 > **Scope:** Entire app, v1. Sits *above* `docs/PRD.md` (the WHAT) and `docs/DESIGN_DECISIONS.md` (the WHY) as the HOW — integration shapes, file paths, data flows, sequencing.
 > **Companion plans:**
@@ -314,6 +314,8 @@ interface VucibleStorageV1 {
 
 **Invariant: aspect normalization.** When `providers.gemini` is set (Gemini enabled), `defaults.aspectRatio.kind` MUST be `"discrete"`. The freeform variant is only legal when Gemini is absent. Enforced at write time in `setStorage()` — if a freeform aspect is being written while Gemini is configured, snap to nearest supported ratio (DD-023) before persist. Same invariant on the per-round `Round.aspect` field (§5.3) — enforce in `startRound*`.
 
+The invariant is **one-way**: a `discrete` aspect is *always* legal regardless of provider config (it's a strict subset). Snapping logic must only fire on `freeform → has-Gemini` transitions, never on `discrete → discrete` swaps or on toggles when the current value is already `discrete`. Defensive code that "always re-snaps on storage write" would be wasted work and could spuriously change a user's selection.
+
 ### 5.2 `localStorage["vucible:v1.wizard"]` (scratchpad)
 
 See `docs/plans/wizard.md` §6.2.
@@ -325,6 +327,8 @@ Two object stores:
 #### IDs
 
 All `id` fields use **ULID** (lexicographically sortable, 26-char base32, encodes timestamp). Library: `ulid` (npm, ~1 KB, no deps). Helper `generateId()` lives in `src/lib/storage/schema.ts` and is the single source of truth for ID generation. We do not use `crypto.randomUUID()` (it's UUID v4 — not time-sortable, which breaks our "most recent" indexes).
+
+**Monotonic factory required.** Plain `ulid()` can produce duplicate IDs when called multiple times within the same millisecond (random component is reseeded per call). Round orchestration generates the round ID and may generate sub-IDs for slots in a tight burst — well within a single ms. Use `monotonicFactory()` from the `ulid` package; `generateId()` wraps a module-level `monotonic = monotonicFactory()` instance so successive calls in the same ms produce strictly increasing IDs without randomness collision risk.
 
 #### `sessions` — one entry per starting prompt
 
@@ -544,9 +548,18 @@ export async function withRetry<T>(
     } catch (err) {
       const norm = normalizeError(err);
       if (attempt >= (opts.maxAttempts ?? 3) || !RETRYABLE_KINDS.has(norm.kind)) throw err;
-      const wait = norm.retryAfterSeconds != null
+      // Cap Retry-After at MAX_RETRY_AFTER_MS to prevent absurd provider responses
+      // (e.g. 3600s) from holding a throttle slot for an hour. If the server asks
+      // for longer than this, we treat the slot as fatally rate-limited: surface
+      // a 429 error to the UI; user can manually click Regenerate when ready.
+      const MAX_RETRY_AFTER_MS = 60_000;
+      const requested = norm.retryAfterSeconds != null
         ? norm.retryAfterSeconds * 1000
         : delay + Math.random() * 250;
+      if (norm.retryAfterSeconds != null && requested > MAX_RETRY_AFTER_MS) {
+        throw err; // bail out; do not hold the slot
+      }
+      const wait = Math.min(requested, MAX_RETRY_AFTER_MS);
       await sleep(wait);
       delay *= 2;
     }
@@ -588,6 +601,13 @@ interface NormalizedError {
 ```
 
 Each provider has its own `mapError(response, body)` that produces a `NormalizedError`. Round engine and wizard both consume the normalized type.
+
+**Network failure granularity.** `network_error` is a single bucket but carries enough info in `message` to distinguish three sub-cases the UI surfaces differently:
+- DNS / connection refused (captive portal, provider domain blocked) → *"Couldn't reach OpenAI. If only one provider is failing, your network may be blocking it."*
+- Aborted by user/page-unload (`AbortError`) → *"Cancelled."* (treated as terminal, no retry).
+- Timeout / partial-response truncation → *"Connection dropped. Retrying."* (retryable).
+
+`mapError` inspects `err.name` (`AbortError` vs `TypeError`) and the response state to populate `message` distinctly. `errorToMessage(err, "round")` returns the right copy for each. The `kind` stays `network_error` for the retry policy — only the user-facing copy differs.
 
 **Centralized user-facing message mapping.** A single function `errorToMessage(err: NormalizedError, context: "wizard" | "round"): string` lives in `src/lib/round/failures.ts` and is the single source of truth for mapping a `NormalizedError` to user-facing copy. Both `<ImageCardError/>` and `<RateLimitBanner/>` consume it via a `useErrorToast()` hook (also in `failures.ts`) that wraps the project's toast primitive. Wizard error tiles use the same function with `context: "wizard"` for slightly different phrasing (e.g. "Re-check and try again" vs "Try regenerating"). Avoids duplicated copy across surfaces.
 
@@ -701,11 +721,37 @@ History rail slides in from the left when toggled.
 
 Plain `console.debug` / `console.warn` / `console.error`. No telemetry library. Per AGENTS.md "Console Output" section: structured, minimal — avoid spam in successful paths.
 
+### 9.4.1 BFCache restoration
+
+Safari and Firefox aggressively place navigated-away pages into the back/forward cache (BFCache); the page resumes with full JS state preserved on `popstate`/`pageshow`. This interacts badly with our `beforeunload`-driven `AbortController.abort()` (§10.4): when the page entered BFCache, we aborted in-flight rounds and revoked object URLs, but the JS state still references the now-dead controllers. On `pageshow` with `event.persisted === true`:
+
+1. Treat the active round (if any) as terminated — same path as the orphan-round sweep (§10.4).
+2. Re-create `ImageCache` and `ThumbnailCache` from scratch; the prior object URLs are revoked.
+3. Force a re-render so `<img>` tags reach for fresh URLs from the cache.
+
+Listener lives in `<AppShell/>` and is the only `pageshow` listener in the app.
+
+Conversely: do NOT call `abort()` on `pagehide` if `event.persisted === true` — the page is going into BFCache, not unloading; aborting would needlessly throw away in-flight work that *might* resume cleanly. Lean: still abort, accept the cost. Restoration always re-renders as terminated rather than trying to reconcile half-aborted state. Cleaner state machine.
+
 ### 9.5 Browser support
 
 Modern evergreen: Chrome ≥ 110, Firefox ≥ 110, Safari ≥ 16, Edge ≥ 110. We use IndexedDB v3, fetch, AbortController, BigInt, structuredClone — all baseline in those versions.
 
 **Private / incognito modes.** Safari Private Browsing severely caps both `localStorage` (~7 days, per-tab partitioned in some configurations) and IndexedDB; Firefox Private Browsing wipes IndexedDB on close. The app must (a) detect private mode where feasible (Safari: `localStorage.setItem` may throw `QuotaExceededError` on first write attempt; Firefox: IndexedDB `open()` may reject with `InvalidStateError`) and (b) surface a non-blocking banner: *"You're browsing privately. Your keys and history won't persist between sessions."* This is documentation-of-reality, not a fix — we don't have a workaround. See §14.S for the open question on whether to soft-block first-run wizard in private mode.
+
+### 9.5.1 Multi-tab behavior
+
+Two tabs of vucible open at the same origin share `localStorage`, IndexedDB, and the **browser-level rate-limit budget at the provider** — but each tab runs an *independent* `ProviderThrottle` instance that thinks it has the full IPM cap to itself. Concrete failure modes:
+
+- **Settings clobber.** Tab A and Tab B both auto-save on blur (§10.3) → last-write-wins; the slower tab silently overwrites the faster tab's change.
+- **Spurious 429s.** Both tabs running rounds simultaneously → combined inflight exceeds provider IPM → 429s that the per-tab throttle didn't anticipate. Retry budget burns. User sees error tiles for what looks like a bug.
+- **Eager-intent placeholder collision.** Two tabs starting a round in the same session at the same moment → two `Round` records with overlapping `number` field. Schema has no unique constraint per (sessionId, number).
+
+Mitigation (v1, minimum viable):
+
+1. **Cross-tab broadcast on storage writes.** `<KeysProvider/>` listens to the `storage` event (fires when *another* tab writes to localStorage) and re-reads `vucible:v1` to keep state fresh. Last-write-wins persists, but at least the active UI in each tab reflects current truth.
+2. **Single-writer hint at round start.** On `startRound*`, check via `BroadcastChannel("vucible")` whether another tab claims an active round in the same session. If yes, show an inline warning: *"Another vucible tab is generating right now. Running rounds in parallel will burn your rate limit faster — consider closing the other tab."* Non-blocking — user can override.
+3. **Acknowledge the gap.** True multi-tab safety (cross-tab throttle coordination via `SharedWorker` or `BroadcastChannel`-mediated lease) is **out of scope for v1**. Documented in §14.W.
 
 ### 9.6 Browser-origin (CORS) viability for provider APIs — load-bearing bet
 
@@ -781,7 +827,7 @@ Sections:
 - "Reset to detected default" link.
 
 #### History panel
-- Storage usage estimate (`navigator.storage.estimate()`).
+- Storage usage estimate (`navigator.storage.estimate()`). Not available on Safari < 16 or in some private modes — when missing or rejecting, fall back to *"Storage usage unavailable in this browser. {N} rounds across {M} sessions."* counted from IndexedDB. Never block the panel on the estimate; render the count first, then patch in the byte estimate when (if) the promise resolves.
 - "Clear history" button → confirm dialog → wipe IndexedDB (DD-021).
 
 Component reuse: `<ProviderCard/>`, `<TierBadge/>`, `<ImageCountPicker/>`, `<AspectRatioPicker/>` — all written in the wizard slice and reused here.
@@ -813,9 +859,15 @@ Flow (`startRoundOne(prompt, modelsEnabled, count, aspect)`):
 
 Why batched persistence: per-card writes are ~16 IndexedDB transactions per round. A single settle write is one transaction with all the bytes. IndexedDB transaction setup is the slow path; payload size matters less. For mid-round refresh recovery the eager intent placeholder (step 6) is sufficient — a refreshed round is treated as terminated (no in-flight calls re-attempted; failed slots get error tiles with Regenerate per DD-019). Resolves §14.M.
 
+**Startup orphan-round sweep.** On `<AppShell/>` mount, `loadHistory()` queries IndexedDB for any `Round` with `settledAt === null`. Each such round is rewritten in a single transaction: every slot still in `loading` state becomes `error` with `kind: "network_error"` and `message: "Round interrupted (refresh or tab close)."`; `settledAt` is set to `now()`. Without this sweep, orphan rounds linger forever with `loading` slots that the UI would render as in-progress shimmers in the history rail. Sweep runs once per mount, idempotent. If a sweep fails (IDB error), the app proceeds anyway — the orphans render as terminal-with-error via per-slot fallback in `<RoundCard/>` (treat unknown-status slots as `error`).
+
 **New Session button.** Once the current session has at least one settled round, a "New Session" button appears in `<PromptArea/>` (next to "Generate"). Clicking it: confirm-if-unsettled → starts a fresh `Session` record on next Generate. Replaces the ambiguous "type a new prompt → ???" flow. Resolves §14.N.
 
 **Image cache and object URLs.** `src/lib/round/image-cache.ts` exports a singleton `ImageCache` that owns `URL.createObjectURL` lifecycle. Components request `cache.get(roundId, slotKey)` to get a stable object URL for an image; the cache lazily creates Blob+URL from the round's `bytes` on first access and `revokeObjectURL`s when the consumer unmounts (refcounted) or when the cache is evicted via LRU (max ~64 active URLs). Prevents the leak when users scroll the history rail extensively. Thumbnails (§5.3) get the same cache treatment via a sibling `ThumbnailCache`.
+
+**Eviction-vs-render safety.** Refcounting on `cache.get()`/`cache.release()` (called via `useEffect` mount/unmount) is the primary eviction guard: an entry with `refcount > 0` is **never** evicted, even if it's the LRU candidate. Eviction only considers entries with `refcount === 0`. The cap (96 / 256) is therefore a soft floor — under pathological load (e.g. user scrolls extremely fast across history with many `<img>` elements alive) the cache can exceed the cap. That's preferable to revoking a URL that an `<img>` is mid-decoding, which produces a permanently-broken render even after re-mount (Chrome and Safari treat revoked URLs as a dead reference for that decode lifecycle). If the cache balloons past 2× the cap, log a `console.warn` and continue; this is a profiler signal, not a correctness issue.
+
+**MIME preservation on read-back.** `Round.openaiResults[i].mimeType` and `geminiResults[i].mimeType` (§5.3) are persisted alongside `bytes`. `ImageCache` constructs the Blob as `new Blob([bytes], { type: mimeType })` — never default `application/octet-stream`. Likewise `prepareReferences` (§10.5) reads `mimeType` from each selected `RoundResult` and uses it on both the multipart Blob (OpenAI) and the inline part header (Gemini). A missing/empty mimeType is a corruption signal — the slot is treated as errored and excluded from the reference set with a console warn. Prevents 400s from OpenAI on multipart uploads with wrong content-type.
 
 **Cap sizing math.** 64 active full-bytes URLs × 1 MB ≈ 64 MB resident — fits modern devices comfortably. With current-round (16) + previous-round (16) + history rail expansion (up to ~3 hovered rounds × 16) we're at ~80 active URLs in the worst case, so `ImageCache` caps at **96** for full bytes (not 64). `ThumbnailCache` runs separately at **256** (each thumbnail ~30 KB → ~8 MB resident worst case). Numbers re-tunable; updated from a single constant.
 
@@ -880,6 +932,8 @@ Toggling Gemini changes the aspect picker form (DD-023). Both controls live in `
 
 Edge: user disables both → Generate button disabled with tooltip *"Enable at least one provider."*
 
+**Form lock-during-round.** The entire `useRoundForm` form (prompt textarea, model toggle, aspect picker, image-count picker) is **read-only** while `isRunning` is true. Snapshot at dispatch is the only authoritative form state for that round; if the user could mutate the form mid-round, the visible toggles would diverge from what's actually being generated, and the snap-on-Gemini-toggle UX (§10.7) would fire mid-round and surprise the user. Form unlocks on settle. The lock is implemented at the `useRoundForm` reducer level (rejects all action dispatches when `isRunning`), not just visual `disabled` — defends against keyboard shortcuts, paste events, etc.
+
 ### 10.7 FR-11 — Aspect ratio control
 
 `<AspectRatioPicker/>` switches between two forms based on `geminiEnabled` from `useRoundForm`:
@@ -914,8 +968,14 @@ Acceptance:
 
 Selection mechanic:
 - Click toggles selection; max 4 enforced (5th click no-op + brief shake animation).
+- Only `success` slots are selectable; `loading` and `error` slots ignore clicks.
 - Selection persists into the round record on advance.
 - Visible "Selected: 2/4" counter beneath the grid.
+
+**Evolve enablement rules.**
+- Evolve button **disabled** when: round not yet settled, OR `selections.length === 0`, OR all 16 slots are `error` (no successes to pick from). Tooltip explains: *"Pick 1–4 favorites to continue"* / *"All cards failed — regenerate or start a new prompt"*.
+- Going from 1 selected → user un-selects the last one → Evolve disables in real time. No confirmation needed.
+- Edge: round settles with N successes where N < 4 — selection cap is implicitly `min(4, N)`.
 
 `<ImageZoom/>` modal opens on dedicated zoom button (not click — click is for selection); shows full size with prev/next nav.
 
@@ -1285,6 +1345,30 @@ Current plan: keys validated once and trusted until the user manually re-tests i
 ### V. Persistence semantics of `bytes: ArrayBuffer` via `idb`
 
 `idb`'s `put()` calls structuredClone under the hood. ArrayBuffer is cloneable (not transferred) by default unless we explicitly opt into a transfer. Confirm via Phase 1 storage round-trip test: write a Round, mutate the in-memory ArrayBuffer post-write, read back from IDB — bytes should be unchanged. If transfers do occur (e.g. inside an Object containing an ArrayBuffer, semantics get weird), wrap bytes in a Blob before IDB write. Cheap to verify, expensive to discover late.
+
+### W. Cross-tab throttle coordination (§9.5.1)
+
+V1 ships per-tab throttles with a `BroadcastChannel` warning banner when another tab claims an active round. True cross-tab coordination (shared throttle lease via `SharedWorker` or a leader-election BroadcastChannel protocol) is deferred to v2. Open: should v1 also gate the Generate button when a sibling tab is mid-round? Lean: **no hard gate**, only the warning — soft-blocking the user when they have two tabs open by choice is more annoying than the spurious 429s it prevents. Revisit if telemetry (post-v1) shows multi-tab usage is common.
+
+### X. Test-gen seed cross-tab leak (§10.4)
+
+The post-wizard "throttle has 1 slot consumed for next 60s" seed lives only in the tab that ran the wizard. A user who completes the wizard then immediately opens a second tab to start their first round from there will not have the seed — Tier 1 user sees a spurious 429 on the first card. Fix would require persisting the seed via localStorage with TTL and rehydrating in any tab on `<AppShell/>` mount. Lean: **acknowledge, defer**. The 429 retries cleanly; the user-facing impact is a 30s delay on the first card of the first round in this narrow flow. Revisit only if real-world reports surface.
+
+### Y. Schema migration vs corruption (parse-fail) distinction
+
+§14.D leans toward "treat malformed → wizard runs with banner". As written, that path also fires for **valid but older** schema versions — so a v2 upgrade that bumps `schemaVersion` would silently force every returning user back through the wizard and lose their history (IndexedDB stays, but the keys/defaults blob is wiped). Plan should distinguish:
+- `schemaVersion` missing or unparseable JSON → treat as fresh install, run wizard.
+- `schemaVersion < CURRENT_VERSION` → run a registered migration from `src/lib/storage/migrations/v{N}-to-v{N+1}.ts`. v1 has no migrations to write, but the migration *registry* and the version-gate logic must exist from day one; otherwise v2 is a breaking release for every user.
+
+Lean: scaffold `migrations.ts` with an empty registry in Phase 1; document the contract. Confirm before Phase 1 ships.
+
+### Z. Clock skew on persisted timestamps
+
+`startedAt`, `settledAt`, `validatedAt`, `createdAt` are all `new Date().toISOString()` — local clock. Failure modes: (a) NTP correction mid-round → `settledAt < startedAt`; (b) user has a wildly wrong clock → ULIDs (which encode time) and ISO timestamps both wander; (c) DST transition mid-round → no functional impact since ISO-8601 is UTC, but log-readability suffers. Lean: **accept**. We don't compare timestamps across users (no backend); all comparisons are within one device's clock domain. Sort orders only break if the clock jumps backward by more than the round duration — rare. Document the assumption in the storage module's header comment so a future maintainer doesn't add cross-device sync without revisiting.
+
+### AA. Gemini Free tier — trust the user
+
+Wizard asks the user to self-declare their Gemini tier (DD-022). A user who recently added billing but picked "Free" out of habit gets the false-warning UX (*"Free tier doesn't include image gen"*). Reverse case: user picks a paid tier they don't actually have → 429s in production. We **do not auto-test** the Gemini tier (would cost money and defeats the free `list-models` validation). Lean: **document as "user is responsible for accurate self-declaration"** in copy near the dropdown; show the warning only if Free is picked; do not block. Confirm before Phase 3.
 
 ---
 
