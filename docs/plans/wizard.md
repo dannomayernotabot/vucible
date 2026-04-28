@@ -177,6 +177,16 @@ interface WizardProgress {
 - The validation in-flight flag per provider (so we can show the spinner).
 - The actual test-gen image bytes from OpenAI: **discarded immediately**. Per DD-022: "We swallow the test image (do not surface it)." Do not store, do not display.
 
+### 6.3.1 Validate-button double-click prevention
+
+OpenAI test-gen costs ~$0.04 per fire. A user paste-rage-clicking "Validate" must not be billed twice. Defense-in-depth:
+
+1. The Validate button is disabled the instant the click handler fires — `disabled={isValidating}` plus an early-return guard inside the handler.
+2. The reducer rejects `validate-start` actions for a provider that is already `validating`.
+3. The provider-client `testGenerate(key)` is **not** idempotent across retries (each call costs money). The wizard does NOT auto-retry on transient errors — only the user clicking "Retry" fires another call.
+
+Manually tested in Phase 7 by inserting a 2-second `setTimeout` shim around the button handler and rage-clicking — only one call fires.
+
 ### 6.4 State machine
 
 `useReducer` in `WizardShell.tsx`. Discriminated-union actions:

@@ -1,6 +1,6 @@
 # Vucible — Master Implementation Plan
 
-> **Status:** Round 3 (internal consistency sweep)
+> **Status:** Round 4 (adversarial pushback)
 > **Date:** 2026-04-28
 > **Scope:** Entire app, v1. Sits *above* `docs/PRD.md` (the WHAT) and `docs/DESIGN_DECISIONS.md` (the WHY) as the HOW — integration shapes, file paths, data flows, sequencing.
 > **Companion plans:**
@@ -257,6 +257,10 @@ src/
 2. Banner: *"Hit your gpt-image-2 rate limit. Lower the per-round image count or upgrade your OpenAI tier — link."*
 3. Round continues to settle as best it can; user can manually click "Regenerate" on failed cards or wait for the throttle queue to drain.
 
+### 4.7.1 Long-round expectation surfacing (low-tier latency)
+
+At Tier 1 (5 IPM) on both providers with a 16-image round, the queue alone takes ~3.2 minutes to drain (16/5) before any individual gen latency. Without a UX signal the user reasonably believes the app is broken. `<ResultGrid/>` shows an estimated-completion banner once the round starts: *"Tier 1 throttle: estimated 3 min for queue. Lower the per-round count in the prompt area for faster rounds."* Estimate = `ceil(slot_count / ipm) * 60s + p50_gen_latency`. Updates live as cards settle. Uses a static 18 s p50 for gen latency until we have real data.
+
 ### 4.8 Provider goes down (5xx storms)
 
 1. All in-flight calls to that provider fail through retry-3x.
@@ -423,13 +427,19 @@ export async function generate(
 
 **Endpoint mapping**
 
-- `testGenerate`: `POST /images/generations` with smallest-cost params.
-- `generate`: `POST /images/generations` with full params, including `image[]` for round 2+ references (gpt-image-2 accepts reference images via the same endpoint with `image` field).
+- `testGenerate`: `POST /images/generations` with smallest-cost params (no reference images).
+- `generate` (round 1, no references): `POST /images/generations`.
+- `generate` (round 2+, with references): **likely `POST /images/edits`**, not `/images/generations`. Older OpenAI image models (DALL·E) split generation from editing into separate endpoints; `gpt-image-1` unified them under `/images/generations` with an optional `image` field. Whether `gpt-image-2` follows the unified pattern or reverts to `/images/edits` for references is **unconfirmed** and resolved by the §14.A smoke test. Provider client must pick the right endpoint based on whether `referenceImages` is present.
+- Response format: gpt-image-1 defaults to `b64_json`; gpt-image-2's default is unverified. The wizard plan §7.1 hard-codes `response_format: "b64_json"`; if that field has been removed or renamed in gpt-image-2, the smoke test surfaces it before Phase 3.
 - Verify request shape against current OpenAI image-generation docs at integration time. Open question §14.A.
 
 **Header parsing for tier detection** — same logic as wizard (`src/lib/providers/tiers.ts`). Round engine also reads headers on every successful generate response and updates the in-storage `ipm` if the detected value disagrees with what's stored (gentle drift catches tier upgrades).
 
-**Reference image encoding.** gpt-image-2 accepts reference images as multipart form data or as base64. Lean: multipart for size efficiency. Round 2+ flow assembles a FormData with the prompt, size params, and N image parts.
+**Header names are unverified.** The wizard plan §7.1 reads `x-ratelimit-limit-images`. OpenAI's documented headers are `x-ratelimit-limit-requests` and `x-ratelimit-limit-tokens`; an `-images` variant is plausible for image endpoints but not documented at plan-write time. Phase 2 smoke test (§11) records the exact header set and updates `tiers.ts`. Fallback if no `-images` header exists: read `-requests` and treat the per-minute request cap as the IPM proxy.
+
+**IPM-to-Tier mapping is provisional.** `{5, 20, 50, 100, 250}` for tiers 1–5 was sourced from OpenAI's gpt-image-1 documentation circa Q4 2025. gpt-image-2's tier numbers may differ. Smoke test confirms; if numbers shift, update `tiers.ts` only — the rest of the architecture is decoupled from specific values.
+
+**Reference image encoding.** gpt-image-2 accepts reference images as multipart form data or as base64. Lean: multipart for size efficiency. Round 2+ flow assembles a FormData with the prompt, size params, and N image parts. Multi-reference (`image[]`) support is unconfirmed for gpt-image-2 — if the API caps at one reference image, plan B is to composite the K selected images into a single grid before sending (degrades quality, but unblocks the flow). Resolved by smoke test.
 
 ### 6.2 Gemini client — `src/lib/providers/gemini.ts`
 
@@ -679,7 +689,7 @@ History rail slides in from the left when toggled.
 - **Image rendering**: never decode reference images on the main thread for round 2+; offload to a Web Worker if profiling shows jank.
 - **IndexedDB writes**: batch a round's writes into a single transaction.
 - **Streaming**: don't `await Promise.all` the round; spawn N independent promises and update grid state as each settles.
-- **Bundle**: keep the wizard route lazy-loaded so users with keys never download wizard code. (`next/dynamic` with `ssr: false` for the gate.)
+- **Bundle**: with `output: 'export'` (DD-020) there are no on-demand server-rendered routes, but `next/dynamic` with `{ ssr: false }` still produces a separate JS chunk that's only fetched when the gate decides to render the wizard. `<WizardOrApp/>` chooses between `dynamic(() => import('@/components/wizard/WizardShell'))` and `dynamic(() => import('@/components/shell/AppShell'))` so first-time users don't pay the AppShell bundle cost and returning users don't pay the wizard bundle cost. Verified by inspecting the export's `_next/static/chunks/` after build.
 
 ### 9.3 Error boundaries
 
@@ -694,6 +704,33 @@ Plain `console.debug` / `console.warn` / `console.error`. No telemetry library. 
 ### 9.5 Browser support
 
 Modern evergreen: Chrome ≥ 110, Firefox ≥ 110, Safari ≥ 16, Edge ≥ 110. We use IndexedDB v3, fetch, AbortController, BigInt, structuredClone — all baseline in those versions.
+
+**Private / incognito modes.** Safari Private Browsing severely caps both `localStorage` (~7 days, per-tab partitioned in some configurations) and IndexedDB; Firefox Private Browsing wipes IndexedDB on close. The app must (a) detect private mode where feasible (Safari: `localStorage.setItem` may throw `QuotaExceededError` on first write attempt; Firefox: IndexedDB `open()` may reject with `InvalidStateError`) and (b) surface a non-blocking banner: *"You're browsing privately. Your keys and history won't persist between sessions."* This is documentation-of-reality, not a fix — we don't have a workaround. See §14.S for the open question on whether to soft-block first-run wizard in private mode.
+
+### 9.6 Browser-origin (CORS) viability for provider APIs — load-bearing bet
+
+DD-001 asserts "Both target APIs support browser-origin calls with the user's own key." This is **the single largest unverified bet in the plan** — if either API blocks browser-origin calls, the entire BYOK architecture collapses and we'd need a thin proxy (which contradicts DD-001).
+
+Known facts as of plan-write time:
+- **OpenAI**'s official SDK requires `dangerouslyAllowBrowser: true` to run in a browser, and `api.openai.com` historically did not send permissive CORS headers for arbitrary origins. Direct `fetch()` from a browser to `https://api.openai.com/v1/images/generations` may fail at the preflight (`Access-Control-Allow-Origin`) check on some endpoints.
+- **Gemini**'s `generativelanguage.googleapis.com` REST endpoint accepts `?key=<apiKey>` query-param auth and historically *does* send permissive CORS headers — but the multipart `:generateContent` shape with inline images is less battle-tested in the browser.
+
+Mitigation plan (executed in **Phase 0, before any other work**):
+
+1. **CORS smoke test.** A standalone script (`scripts/cors-smoke.html` — open in a browser; not a Next.js page yet) that, with a real key, attempts:
+   - `POST` to `/v1/images/generations` (OpenAI) — minimal body, observe network tab.
+   - `GET /v1/models?key=...` (Gemini) — observe.
+   - `POST` `models/{id}:generateContent` (Gemini) — observe.
+   For each, check: does the preflight `OPTIONS` succeed? Does the actual request return the response body or a CORS-blocked opaque?
+2. **Decision gate.** If OpenAI blocks browser-origin calls, the project pivots before Phase 1 starts:
+   - Option A — accept a thin Vercel Edge Function proxy *for OpenAI only* (3–5 lines: forward the request, including the user's key, do not log). This is a partial backslide on DD-001 and would require a new DD-024.
+   - Option B — drop OpenAI in v1; ship Gemini-only.
+   - Option C — pivot the whole project to a desktop wrapper (Tauri/Electron), out of v1 scope.
+3. **Recorded outcome** in §14.T (added below).
+
+Why this isn't paranoia: every prior browser-only OpenAI app the author has seen either uses a proxy or runs in an Electron wrapper. The "no backend, just call from the browser" pattern is the path of least resistance on paper and a known footgun in practice.
+
+Test-gen call cost note: the CORS smoke test for OpenAI will spend ~$0.04 of the author's API budget. Budgeted; cheaper than building the wizard then discovering CORS blocks the test-gen call.
 
 ---
 
@@ -780,6 +817,20 @@ Why batched persistence: per-card writes are ~16 IndexedDB transactions per roun
 
 **Image cache and object URLs.** `src/lib/round/image-cache.ts` exports a singleton `ImageCache` that owns `URL.createObjectURL` lifecycle. Components request `cache.get(roundId, slotKey)` to get a stable object URL for an image; the cache lazily creates Blob+URL from the round's `bytes` on first access and `revokeObjectURL`s when the consumer unmounts (refcounted) or when the cache is evicted via LRU (max ~64 active URLs). Prevents the leak when users scroll the history rail extensively. Thumbnails (§5.3) get the same cache treatment via a sibling `ThumbnailCache`.
 
+**Cap sizing math.** 64 active full-bytes URLs × 1 MB ≈ 64 MB resident — fits modern devices comfortably. With current-round (16) + previous-round (16) + history rail expansion (up to ~3 hovered rounds × 16) we're at ~80 active URLs in the worst case, so `ImageCache` caps at **96** for full bytes (not 64). `ThumbnailCache` runs separately at **256** (each thumbnail ~30 KB → ~8 MB resident worst case). Numbers re-tunable; updated from a single constant.
+
+**Double-click guard on Generate / Evolve.** Both buttons are disabled the moment a round starts (`<RoundProvider/>` exposes `isRunning` derived state). The button component itself uses `disabled` state plus a guard inside `onClick` to early-return if `isRunning` is true — defense-in-depth in case of race between state propagation and click event. Prevents double-fan-out (32 calls instead of 16) which would (a) double-charge the user, (b) break the throttle slot accounting, (c) cause both rounds' results to interleave into the same grid.
+
+**AbortController lifecycle.**
+- Each round owns one `AbortController`. The signal is passed into every `withRetry → provider.generate(...)` call.
+- The controller is aborted when: (a) user clicks "New Session" mid-round (after confirm), (b) user navigates away (`beforeunload` listener calls `abort("page-unload")`), (c) the component unmounts. Aborted-then-resumed flows are not supported in v1: an abort settles the round as terminal, in-flight slots become `error` with kind `network_error` (signaling user-canceled).
+- We do NOT abort on a single failed slot or to "clean up after settle" — the round controller is one-shot and dies with the round.
+- `ResultGrid`'s "Regenerate" per-slot creates a fresh controller scoped to that single slot (or piggy-backs on the round's if the round is still active). Resolves the lifecycle ambiguity from prior drafts.
+
+**Test-gen accounting against IPM.** When the wizard completes, the OpenAI test-gen call has consumed 1 of the user's IPM budget within the rolling minute window. The first round of the main app is fired immediately after wizard completion in many flows. The throttle's IPM accounting is *cold-started* with no knowledge of the test-gen call — so a Tier 1 user could see a spurious 429 on the first card of round 1.
+
+Mitigation: when `validate-success` fires in the wizard reducer, persist a `lastValidatedAt: ISO-8601` *and* mark the in-memory throttle as having one slot consumed for the next 60 seconds after completion. The throttle exposes `seedConsumed(count: number, ttlMs: number)` so the wizard's hand-off can prime it. If the user takes more than 60 s to type their first prompt, the seed expires naturally. Tested by manual Phase 6 smoke.
+
 Acceptance:
 - 16 calls fan out, throttled per `concurrencyCap`.
 - Cards stream in (no batched render).
@@ -788,6 +839,12 @@ Acceptance:
 - "New Session" button visible once ≥1 round settled in the current session.
 
 ### 10.5 FR-3 — Round 2+ evolution
+
+**Prompt length enforcement.** DD-015 acknowledges per-round prompt growth toward provider caps (~4000 chars OpenAI; Gemini's is similar order of magnitude). `buildEvolvePrompt(session, currentRoundN)` MUST measure the produced prompt length and apply a fallback if it exceeds a configured `MAX_PROMPT_CHARS = 3500` (conservative buffer below documented caps):
+
+- **Strategy on overflow:** keep original prompt + last 3 rounds' commentary verbatim; collapse older rounds into a single line: `"After rounds 1–{N-4}: (commentary trail summarized: {first-50-chars-of-each, joined with ' · '})"`. Crude but deterministic; keeps the trail audit-visible without hitting the cap.
+- This is the v0 mitigation flagged in DD-015 — implemented up front rather than waiting for an observed 400. A 400 from a too-long prompt at round 9 would charge the user nothing (request rejected pre-billing) but ruins the round; cheap to prevent.
+- Unit-tested with synthetic 20-round histories.
 
 `startRoundN(session, selectedRoundId, selections, commentary)`:
 
@@ -906,10 +963,12 @@ Each phase produces something the user can interact with (or at minimum a review
 
 ### Phase 0 — Pre-work (already done or near-done)
 - [x] PRD, DDs, plans drafted.
+- [ ] **Run CORS smoke test (§9.6) — blocks all subsequent phases.** Decision gate: if OpenAI blocks browser-origin calls, decide pivot per §9.6 before starting Phase 1. This is the single highest-risk pre-work item.
 - [ ] Install missing shadcn primitives: `alert`, `radio-group`, `select`, `separator`, `tooltip`, `progress`, `scroll-area`, `sonner`. (`bunx shadcn@latest add ...`)
-- [ ] Add runtime deps via bun: `ulid`, `idb`, `msw` (verify React 19 / Next 16 compatibility for the test stack).
+- [ ] Add runtime deps via bun: `ulid`, `idb`, `msw` (verify React 19 / Next 16 compatibility for the test stack — msw v2 uses native `fetch`/`Request` which Node 22 has natively, but jsdom 24 may not; pin versions accordingly).
 - [ ] Confirm OpenAI image model identifier (§14.A).
 - [ ] Confirm Gemini image model + endpoint version (§14.B).
+- [ ] Confirm `gpt-image-2` reference-image endpoint (`/images/generations` vs `/images/edits`) and multi-reference support (§6.1, §14.A).
 
 ### Phase 1 — Foundations (storage + types)
 
@@ -1134,13 +1193,13 @@ Produces `out/` directory with the static site. Vercel auto-deploys on push to `
 
 These block implementation if unresolved. Each has a recommended lean.
 
-### A. OpenAI image model identifier (§6.1)
+### A. OpenAI image model identifier + reference-image endpoint shape (§6.1)
 
-Confirm `gpt-image-2` vs. `gpt-image-1.5` vs. another. Resolved by Phase 2 smoke test.
+Confirm: (1) model string (`gpt-image-2` vs alternatives), (2) reference-image endpoint (`/images/generations` with `image` field vs `/images/edits`), (3) multi-reference-image support (single reference vs `image[]` array up to K=4), (4) presence and shape of `response_format: "b64_json"`, (5) actual rate-limit header names (`x-ratelimit-limit-images` vs `-requests`). Resolved by Phase 0/2 smoke tests.
 
 ### B. Gemini image model + endpoint version (§6.2)
 
-Confirm exact model string and `v1` vs `v1beta`. Resolved by Phase 2 smoke test.
+Confirm exact model string and `v1` vs `v1beta`. Also confirm: multipart `:generateContent` shape with inline image parts works browser-origin (CORS — see §9.6 / §14.T). Resolved by Phase 0/2 smoke tests.
 
 ### C. Test-gen prompt content (`docs/plans/wizard.md` §15.C)
 
@@ -1206,6 +1265,27 @@ Should v1 require automated axe pass before merge to main? Lean: manual axe-devt
 
 Current pattern holds throttle slots for the entire retry chain, including `Retry-After` waits. Acceptable for v1 (rationale in §6.5). Profile after launch — if real-world latency profiling shows hold-the-slot is a meaningful contributor, refactor to release-and-re-enqueue with a `throttle.pauseFor()` mechanism. v2 candidate.
 
+### S. Private-browsing UX (§9.5)
+
+Detection is unreliable and behaves differently across browsers. Three options: (a) silently best-effort (current lean) — keys persist for the tab session, history wipes on close; (b) detect and show a non-blocking banner; (c) detect and refuse to enter the wizard until the user opens a non-private tab. Lean: (b). Decide before Phase 3.
+
+### T. CORS browser-origin viability (§9.6) — load-bearing
+
+Phase 0 smoke test resolves to one of:
+- (T1) Both providers allow browser-origin calls with permissive CORS → plan proceeds unchanged.
+- (T2) OpenAI blocks → escalate per §9.6 mitigation. Author favors **option A (thin Vercel Edge proxy for OpenAI only)** over dropping OpenAI; would require new DD-024 documenting the deviation from DD-001.
+- (T3) Gemini blocks → drop Gemini; the wizard tier dropdown already supports OpenAI-only flow.
+
+**Decision deadline:** before Phase 1 starts (no Phase 1 work is salvageable if the architecture pivots).
+
+### U. Stale `validatedAt` re-validation policy
+
+Current plan: keys validated once and trusted until the user manually re-tests in Settings. A revoked key returning a 401 mid-round is handled by DD-019's auth_failed path. Open: should we re-validate on app launch if `validatedAt` is older than X days? Lean: **no auto-revalidation** in v1 — re-validation costs $0.04 (OpenAI test-gen) per launch, accumulating silently. The 401 path on first round-1 call is a sufficient signal; user re-pastes via Settings. Confirm before Phase 4.
+
+### V. Persistence semantics of `bytes: ArrayBuffer` via `idb`
+
+`idb`'s `put()` calls structuredClone under the hood. ArrayBuffer is cloneable (not transferred) by default unless we explicitly opt into a transfer. Confirm via Phase 1 storage round-trip test: write a Round, mutate the in-memory ArrayBuffer post-write, read back from IDB — bytes should be unchanged. If transfers do occur (e.g. inside an Object containing an ArrayBuffer, semantics get weird), wrap bytes in a Blob before IDB write. Cheap to verify, expensive to discover late.
+
 ---
 
 ## 15. Out of scope for v1
@@ -1239,7 +1319,7 @@ The app is "v1-done" when:
 5. Settings: change concurrency cap, change default image count, change default aspect, clear history, clear keys → all behave as specified.
 6. Theme toggle persists across reloads with no flash.
 7. `bun run build` produces a clean static export. Vercel deploy succeeds. Real-key smoke test on the deployed URL passes the happy path.
-8. Lighthouse desktop scores: Performance ≥ 90, Accessibility ≥ 95, Best Practices ≥ 95, SEO ≥ 80.
+8. Lighthouse desktop scores **on the wizard / empty-grid landing**: Performance ≥ 90, Accessibility ≥ 95, Best Practices ≥ 95, SEO ≥ 80. Lighthouse on a settled 16-image grid is explicitly *not* a target — 16 large `<img>` tags loaded simultaneously will tank the perf score regardless of what we do, and adding lazy-load / virtualization for in-canvas images would degrade the streaming UX (DD-009). Track a separate manual "TTFM (time to first card)" budget of ≤ 1 s post-Generate-click.
 
 ---
 
