@@ -83,7 +83,11 @@ Adjacent benefit: it forces us to commit to exact API shapes (model strings, end
 ```
 src/app/
   layout.tsx                  -- root layout (theme, fonts, html)
-  page.tsx                    -- gate: read storage, render <WizardShell> or <MainAppPlaceholder>
+  page.tsx                    -- server shell, renders <WizardOrApp/>
+  _components/
+    WizardOrApp.tsx           -- "use client" gate: reads storage, renders
+                                  <WizardShell/> or <MainAppPlaceholder/>
+                                  (master Phase 4 swaps placeholder → <AppShell/>)
   globals.css                 -- (existing)
 
 src/components/
@@ -111,8 +115,11 @@ src/components/
   ui/
     (existing shadcn primitives: badge, button, card, dialog, input, label,
      switch, tabs, textarea, toggle-group, toggle)
-    -- need to add via `bunx shadcn@latest add`:
-       alert, radio-group, select, separator, tooltip
+    -- the wizard slice itself only needs: alert, radio-group, select,
+       separator, tooltip. The full master add list (also includes progress,
+       scroll-area, sonner for the round/grid/toast surfaces) lives in
+       `docs/plans/vucible.md` §3 — install the full master list in master
+       Phase 0 so downstream slices don't have to re-add.
 
 src/lib/
   providers/
@@ -221,12 +228,14 @@ Each non-trivial transition writes to `localStorage["vucible:v1.wizard"]` (debou
 ```json
 {
   "model": "gpt-image-2",
-  "prompt": "a small calibration swatch",
+  "prompt": "a single solid color square",
   "size": "1024x1024",
   "n": 1,
   "response_format": "b64_json"
 }
 ```
+
+(Prompt content was the resolved lean from §15.C / master `vucible.md` §14.C — minimal, unambiguous, never triggers safety. Smoke test confirms before Phase 3.)
 
 **Open question** (per DD-003 and §15.A): confirm exact model identifier string at integration time. Candidates we've seen: `gpt-image-1`, `gpt-image-1.5`, `gpt-image-2`. Plan: ship behind a `OPENAI_IMAGE_MODEL` env-default constant in `src/lib/providers/openai.ts` so we can swap without hunting.
 
@@ -440,7 +449,7 @@ Each item below is a candidate for `br create`. They're sequenced to surface int
 > **Relationship to the master plan.** When following `docs/plans/vucible.md` end-to-end, this wizard's Phase 0–2 are subsumed by master Phases 0–2 (master Phase 2 is a superset: it includes `generate()` and `failures.ts`, which the wizard doesn't strictly need but downstream phases do). What's listed below as Phase 3 onwards becomes the work inside master Phase 3 (the "build the wizard" phase). Phase numbering here is preserved for the standalone case where someone wants to ship only the wizard.
 
 ### Phase 0 — Scaffold deps (30 min)
-1. Install missing shadcn primitives: `alert`, `radio-group`, `select`, `separator`, `tooltip`.
+1. Install shadcn primitives. **If running the wizard slice in isolation:** `alert`, `radio-group`, `select`, `separator`, `tooltip`. **If running inside the master plan flow:** install the full master list per `docs/plans/vucible.md` §3 (adds `progress`, `scroll-area`, `sonner`) — master is authoritative on the full add list.
 2. Add a `docs/plans/` directory pointer to AGENTS.md (or accept it as convention).
 
 ### Phase 1 — Types + storage (1 hr)
@@ -546,14 +555,9 @@ DD-003 wrote "gpt-image-2"; web search saw "gpt-image-1", "gpt-image-1.5", and "
 
 DD-003 wrote "Gemini 3.1 Pro Preview"; web search showed "Nano Banana Pro" and "Gemini 3 Pro Image". Need to **confirm exact model string and endpoint version** (`v1` vs `v1beta`). Confirmation method: hit the Gemini models list endpoint with our key.
 
-### C. Test-gen prompt content
+### ~~C. Test-gen prompt content~~ — RESOLVED
 
-`"a small calibration swatch"` is a placeholder. Concerns:
-- Triggers content policy 422? Probably no, but bland is good.
-- Returns trivially small payload?
-- Gives clean rate-limit headers (some providers return different headers based on prompt)?
-
-Lean toward `"a single solid color square"` — minimal, unambiguous, never triggers safety. Confirm against real API in Phase 2 smoke test.
+Locked: `"a single solid color square"`. Minimal, unambiguous, never triggers safety. Phase 2 smoke test verifies no 422 on any tier (per §10 OpenAI 422 row).
 
 ### D. Storage corruption recovery
 

@@ -1,12 +1,12 @@
 # Vucible — Master Implementation Plan
 
-> **Status:** Round 6 (implementation realism check)
-> **Date:** 2026-04-28
+> **Status:** Round 7 (handoff readiness — final round)
+> **Date:** 2026-04-27
 > **Scope:** Entire app, v1. Sits *above* `docs/PRD.md` (the WHAT) and `docs/DESIGN_DECISIONS.md` (the WHY) as the HOW — integration shapes, file paths, data flows, sequencing.
 > **Companion plans:**
-> - `docs/plans/wizard.md` — detailed plan for FR-8 (referenced from §10.2 below; not duplicated here)
+> - `docs/plans/wizard.md` — detailed plan for FR-8 (referenced from §10.2 below; not duplicated here). On any conflict between this master plan and `wizard.md`, **this master plan is authoritative**.
 >
-> This plan is the source of truth for handoff to `beads-workflow`. Each item in §11 (Implementation Phases) becomes a `br create` candidate.
+> This plan is the source of truth for handoff to `beads-workflow`. Each numbered sub-bullet in §11 (Implementation Phases) becomes one `br create` candidate. When a sub-bullet bundles "build the thing + tests + UI", split it on conversion. See §11 narrative notes per phase for hidden dependencies that are not in the sub-bullet list and must be tracked as bead deps (e.g. BFCache listener landing in Phase 6 not Phase 4 per §14.AC).
 
 ---
 
@@ -1081,14 +1081,17 @@ Estimate: ~8 hr (wizard plan total ~10 hr minus Phase 1 storage already done in 
 
 ### Phase 4 — App shell + theme
 
-Output: `<AppShell/>` renders after wizard, with TopBar, theme toggle, and a "Main app coming soon" placeholder. Theme persists across reloads.
+Output: `<AppShell/>` renders after wizard, with TopBar, theme toggle, and a "Main app coming soon" placeholder. Theme persists across reloads. Mount-time orphan-round sweep clears any incomplete rounds from a prior session.
+
+> **Bead dep note.** Step 5 below depends on Phase 1's `src/lib/storage/history.ts` being present — explicit dep edge.
 
 1. `src/components/shell/AppShell.tsx`.
 2. `<TopBar/>` with logo, history toggle (stub), theme toggle, settings gear (stub).
 3. `<ThemeProvider/>` + `<ThemeToggle/>` with no-flash script.
 4. Replace the wizard-slice `<MainAppPlaceholder/>` with `<AppShell/>`.
+5. Orphan-round sweep wiring on `<AppShell/>` mount (§10.4) — calls into `history.ts` (Phase 1). Idempotent; failure is logged and tolerated.
 
-Estimate: 3 hr. Was 2 hr; bumped because the no-flash theme script (`<head>`-injected inline script that reads localStorage and sets `<html class>`) interacts non-trivially with Next 16's App Router + `output: 'export'` — `next-themes` itself works but tuning to avoid a hydration warning under static export needs verification. Adds the orphan-round sweep (§10.4) wiring on `<AppShell/>` mount.
+Estimate: 3 hr. Was 2 hr; bumped because the no-flash theme script (`<head>`-injected inline script that reads localStorage and sets `<html class>`) interacts non-trivially with Next 16's App Router + `output: 'export'` — `next-themes` itself works but tuning to avoid a hydration warning under static export needs verification. Includes the orphan-round sweep wiring as step 5.
 
 ### Phase 5 — Settings page (FR-9)
 
@@ -1107,12 +1110,20 @@ Estimate: 5 hr. Was 3.5 hr. Auto-save isn't the simplification it looks: every p
 
 Output: type prompt → click Generate → 16 cards stream in with live progress banner. "New Session" button visible after first round. No selection wiring yet, no round 2.
 
-1. `src/lib/round/throttle.ts` + `retry.ts` + `orchestrate.ts` + `image-cache.ts` (failures.ts already from Phase 2).
-2. `<RoundProvider/>` with a single in-progress round; exposes `{done, total, queued}` derived state.
-3. `useRoundForm()` hook + `<PromptArea/>` (prompt + ModelToggle + AspectRatioPicker + ImageCountPicker + Generate + New Session button).
-4. `<ResultGrid/>` with global progress banner + `<ImageCard/>` (loading + success + error states).
-5. Eager intent persistence on round start; thumbnail generation + batched persistence on settle.
-6. `ImageCache` wired into `<ImageCardSuccess/>` for object-URL lifecycle.
+> **Bead split note for `beads-workflow`.** This is the largest phase. Convert each numbered sub-bullet below to its own bead (do not bundle). Sub-bullets 4 and 5 are themselves multi-step — split further on conversion as noted inline. Estimated total bead count for this phase: ~10.
+
+1. `src/lib/round/throttle.ts` — `ProviderThrottle` class per §6.4; expose `inflight()`, `queued()`, `setCap()`, `seedConsumed()`. Tests with vitest fake timers.
+2. `src/lib/round/retry.ts` — `withRetry` per §6.5 including `MAX_RETRY_AFTER_MS` cap. Tests for retry budget exhaustion + Retry-After honoring.
+3. `src/lib/round/image-cache.ts` — `ImageCache` + `ThumbnailCache` refcounted LRU per §10.4; revoke-on-zero-refcount; cap at 96 / 256.
+4. `src/lib/round/thumbnails.ts` — `generateThumbnail(bytes, mime): Promise<{thumbnail: ArrayBuffer; mimeType: 'image/jpeg'}>` using `OffscreenCanvas` with `HTMLCanvasElement` fallback. The *generator* lands here in Phase 6 so settle-time thumbnail creation works; the *consumer* (`<RoundCard/>` rendering thumbnails) is Phase 8.
+5. `src/lib/round/orchestrate.ts` — `startRoundOne()` per §10.4 steps 1–9. Split for beads as: (a) input validation + slate compute + eager-intent placeholder write; (b) fan-out + per-slot terminal-state stream into in-memory state; (c) settle path: thumbnail generation + batched single-transaction write.
+6. `<RoundProvider/>` — context exposing `{ round, isRunning, done, total, queued }` derived state. Live `inflight()`/`queued()` subscription needs an `EventTarget` emitter on `ProviderThrottle` (or polling tick) — pick the emitter approach. Track `consecutive429Count` per provider for §10.11 banner detection (banner UI itself is Phase 9).
+7. `useRoundForm()` hook + `<PromptArea/>` — prompt textarea + `<ModelToggle/>` + `<AspectRatioPicker/>` + `<ImageCountPicker/>` + Generate + `<NewSessionButton/>` (visible once ≥1 round settled). Reducer must reject all actions when `isRunning` (§10.6 form-lock).
+8. Stable per-slot keys for streaming render: derive composite key `${roundId}:${provider}:${index}` (slots are not IDed in §5.3 schema — do not add a `slotId` field; derive at render time).
+9. `<ResultGrid/>` with global progress banner + `<ImageCard/>` shell + `<ImageCardLoading/>` / `<ImageCardSuccess/>` / `<ImageCardError/>` states. `<ImageCardSuccess/>` wires to `ImageCache` via `useEffect` mount/unmount.
+10. BFCache `pageshow` listener per §9.4.1 — lands here, NOT in Phase 4, because it depends on `ImageCache` existing (per §14.AC).
+11. Test-gen seed handoff: when wizard completes, call `throttle.seedConsumed(1, 60_000)` per §10.4 / §14.X.
+12. Eager-intent placeholder write on round start (single transaction); batched settle write that overwrites the placeholder with full results + thumbnails.
 
 Estimate: 14 hr. Was 9 hr. Pressure-test bumps it hard. This is the **highest-complexity phase** in the plan and the one most likely to slip. Hidden costs:
 - Streaming into the grid is not `useState + map` — it needs stable per-slot keys (slots aren't IDed in §5.3; either add `slotId` to `RoundResult` or derive a stable composite key `${roundId}:${provider}:${index}`), AnimatePresence-equivalent fade-in via tw-animate-css, ImageCache subscription/release in `useEffect`, and per-slot retry button wiring. Probably wants its own reducer instead of `useState`.
@@ -1307,25 +1318,25 @@ Lean: server-shell + client-gate.
 
 Locked: vitest + @testing-library/react + jsdom + msw + playwright. Confirmed in §12.
 
-### H. IndexedDB image format
+### ~~H. IndexedDB image format~~ — RESOLVED
 
-ArrayBuffer + MIME (preferred) vs. Blob directly. Lean: ArrayBuffer + MIME — slightly smaller, more flexible. Display via `URL.createObjectURL(new Blob([buffer], {type: mime}))` lazily; `ImageCache` (§10.4) owns the lifecycle.
+Locked: ArrayBuffer + MIME (per §5.3). Display via `URL.createObjectURL(new Blob([buffer], {type: mime}))` lazily; `ImageCache` (§10.4) owns the lifecycle.
 
-### I. Round 2+ reference image storage location
+### ~~I. Round 2+ reference image storage location~~ — RESOLVED
 
-Already in IndexedDB from round 1. Round 2+ engine reads them directly. No separate cache.
+Locked: already in IndexedDB from round 1; round 2+ engine reads them directly via `prepareReferences` (§10.5). No separate cache.
 
 ### ~~J. Model toggle persistence across rounds in a session~~ — RESOLVED
 
-Locked (§10.6): persists in `<PromptArea/>` memory across rounds within a session; resets when "New Session" is clicked. New session is an explicit button (§N also resolved).
+Locked (§10.6): persists in `<PromptArea/>` memory across rounds within a session; resets when "New Session" is clicked. New session is an explicit button (§14.N below also resolved).
 
-### K. Aspect ratio carry-forward across rounds
+### ~~K. Aspect ratio carry-forward across rounds~~ — RESOLVED
 
-Lean: carry by default; user can override per round.
+Locked: aspect carries forward by default; user can override per round. Picker is pre-populated from the previous round's `aspect` on round-N entry (§4.4 step 4).
 
-### L. Selection clear behavior on Evolve
+### ~~L. Selection clear behavior on Evolve~~ — RESOLVED
 
-Lean: selection persists into the prior round's `Round.selections` (read-only audit trail in history); the new round's grid starts with no selection.
+Locked: on Evolve, selections persist into the prior round's `Round.selections` (read-only audit trail in history); the new round's grid starts with no selection. The `selections` write happens in the same batched-settle transaction that flips the prior round to settled. Implemented in `orchestrate.ts` round-N entry path.
 
 ### ~~M. Refresh mid-round behavior~~ — RESOLVED
 
@@ -1446,14 +1457,18 @@ DD-020 + Next 16's App Router specify static export. Plan asserts this works wit
 
 The app is "v1-done" when:
 
-1. A new user with no keys completes the wizard, lands on the main app, types a prompt, clicks Generate, and receives 16 streaming images split across both providers.
-2. Selecting 1–4 favorites + optional commentary + clicking Evolve produces a round 2 that demonstrably uses the references (visible visual continuity in most cases).
-3. At least 5 rounds in a single session — history rail shows all of them; refresh preserves history.
-4. Failure paths: bad key → useful error; rate limit → banner with upgrade nudge; content policy hit → tile + Regenerate; provider down → tiles + recovery via toggle-off.
-5. Settings: change concurrency cap, change default image count, change default aspect, clear history, clear keys → all behave as specified.
-6. Theme toggle persists across reloads with no flash.
-7. `bun run build` produces a clean static export. Vercel deploy succeeds. Real-key smoke test on the deployed URL passes the happy path.
-8. Lighthouse desktop scores **on the wizard / empty-grid landing**: Performance ≥ 90, Accessibility ≥ 95, Best Practices ≥ 95, SEO ≥ 80. Lighthouse on a settled 16-image grid is explicitly *not* a target — 16 large `<img>` tags loaded simultaneously will tank the perf score regardless of what we do, and adding lazy-load / virtualization for in-canvas images would degrade the streaming UX (DD-009). Track a separate manual "TTFM (time to first card)" budget of ≤ 1 s post-Generate-click.
+1. A new user with no keys completes the wizard, lands on the main app, types a prompt, clicks Generate, and receives 16 streaming images split 8/8 across OpenAI and Gemini. **Pass test:** with both providers configured at any tier, the resulting `Round` record in IndexedDB has `openaiResults.length === 8` and `geminiResults.length === 8` and `≥ 14 of 16` slots have `status === "success"` on the happy path (allows 2 sporadic provider failures).
+2. Selecting 1–4 favorites + optional commentary + clicking Evolve produces a round 2 whose request payload (DevTools network tab) includes the selected reference images. **Pass test:** for OpenAI, the multipart `POST` body contains N image parts where N = number of selected slots; for Gemini, the JSON body contains N inline `image/*` parts. Visual continuity is qualitative and not a pass criterion.
+3. At least 5 rounds in a single session — history rail shows all of them; full-page refresh preserves history. **Pass test:** after refresh, `<HistoryRail/>` lists all 5 rounds with their thumbnails, and each round's "view" loads the full bytes from IndexedDB.
+4. Failure paths produce the kind-specific copy from `errorToMessage` (per §6.6 mapping):
+   - Bad key → `<ImageCardError/>` shows the `auth_failed` copy ("Invalid API key. Re-check…").
+   - 3 consecutive 429s on a provider → `<RateLimitBanner/>` mounts with the rate-limit copy.
+   - Content policy hit (422) → `<ImageCardError/>` shows the `content_blocked` copy + Regenerate button.
+   - Provider 5xx storm → all that provider's slots are `error` after retry-3x; toggling the provider off + Generate again produces a clean single-provider round.
+5. Settings: change concurrency cap, change default image count, change default aspect, clear history, clear keys. **Pass test:** each change is reflected in `localStorage["vucible:v1"]` immediately after blur (no Save button); "Clear history" sets IndexedDB stores to empty; "Clear keys" wipes the localStorage blob and renders the wizard on next mount.
+6. Theme toggle persists across reloads with no flash. **Pass test:** with theme set to dark and the page reloaded, the `<html>` element has `class="dark"` set *before* React hydration (verified by the no-flash inline script firing pre-React).
+7. `bun run build` produces a clean static export. Vercel deploy succeeds. Real-key smoke test on the deployed URL passes the happy path. **Pass test:** zero CI errors; `out/` directory exists after build; manual happy-path round on the live URL.
+8. Lighthouse desktop scores **on the wizard / empty-grid landing**: Performance ≥ 90, Accessibility ≥ 95, Best Practices ≥ 95, SEO ≥ 80. Lighthouse on a settled 16-image grid is explicitly *not* a target — 16 large `<img>` tags loaded simultaneously will tank the perf score regardless of what we do, and adding lazy-load / virtualization for in-canvas images would degrade the streaming UX (DD-009). Track a separate manual **TTFM** (time to first mounted card) budget of ≤ 1 s post-Generate-click — measured by stopwatch, not a Lighthouse metric.
 
 ---
 
@@ -1470,12 +1485,22 @@ The app is "v1-done" when:
 - **Settle** — All slots in a round reach a terminal state (success or failed-after-retries). Selection unlocks.
 - **Throttle slot** — A concurrent inflight call. Capped per provider.
 - **Snap** — Auto-mapping of an arbitrary aspect ratio to the nearest Gemini-supported one. (DD-023)
+- **ULID** — Universally Unique Lexicographically Sortable Identifier. 26-char base32, encodes time. Used for `Round.id` and `Session.id` so "most recent" sort is just a key sort. (§5.3)
+- **BFCache** — Browser back/forward cache. Safari and Firefox preserve a navigated-away page's full JS state for instant restore on Back; restored via `pageshow` with `event.persisted === true`. (§9.4.1)
+- **CORS** — Cross-Origin Resource Sharing. The browser's enforcement of `Access-Control-Allow-Origin` headers when JS calls a different origin. The viability of browser-origin calls to OpenAI / Gemini is the largest unverified bet in the plan. (§9.6, §14.T)
+- **Eager intent persistence** — Writing a placeholder `Round` record to IndexedDB the moment a round starts, before any provider call settles, so a mid-round refresh can recover instead of orphaning. (§10.4 step 6)
+- **Orphan-round sweep** — `<AppShell/>` mount-time pass that converts any `Round` with `settledAt === null` into a terminated round with `error` slots. Cleans up after refresh or tab-close mid-round. (§10.4)
+- **TTFM** — Time to First Mounted card. Manual budget (≤ 1 s post-Generate-click) tracked separately from Lighthouse; replaces a misleading Lighthouse-on-settled-grid score. (§16)
+- **Test-gen seed** — A 1-slot reservation primed in the OpenAI throttle right after wizard validation, accounting for the test-gen call's IPM consumption so the first round's first card doesn't 429. (§10.4, §14.X)
+- **Snap helper** — `snapAspectIfNeeded(aspect, providers)` in `lib/round/aspect.ts`; the single function that enforces the §5.1 aspect invariant. Called from picker reducer, `startRound*`, and `setStorage`. (§5.3.1, §10.7)
 
 ---
 
-## 18. Review notes for round 2
+## 18. Review notes (historical)
 
-Per the planning-workflow methodology, this is a **round-1 draft**. Recommended next steps:
+(Originally "Review notes for round 2" in the round-1 draft. Retained for trail; superseded by §19.)
+
+Per the planning-workflow methodology, the original recommended next steps were:
 
 1. **Self-review pass** (Claude reading own work) — surface internal contradictions, missing dependencies, undersized risk items.
 2. **GPT-Pro Extended Reasoning review** with the skill's exact review prompt — catches gaps the author missed; revisions integrated via the skill's exact integrate-revisions prompt.
@@ -1484,3 +1509,24 @@ Per the planning-workflow methodology, this is a **round-1 draft**. Recommended 
 5. **Polish beads** through 6+ rounds.
 
 After polish: implementation begins with a fan-out across phase-1 dependencies.
+
+---
+
+## 19. Plan refinement complete
+
+This plan has been through 7 rounds of review:
+- Round 1: initial draft
+- Round 2: external reviewer feedback (paste-in)
+- Round 3: internal consistency sweep
+- Round 4: adversarial pushback
+- Round 5: edge case + failure mode sweep
+- Round 6: implementation realism check
+- Round 7: handoff readiness
+
+Next step: convert §11 phases to beads via the `beads-workflow` skill, then implement.
+
+**Critical-path notes for the converter:**
+- Phase 0's CORS smoke test (§9.6 / §14.T) is the single decision gate — no Phase 1 work is salvageable if the architecture has to pivot to a proxy.
+- Phase 6 is the largest phase (14 hr) — split into ~10 beads per the inline note in §11.
+- Each numbered §11 sub-bullet is one bead; bundle nothing.
+- Bead-dep graph hints documented in §14.AC; preserve those edges on conversion.
