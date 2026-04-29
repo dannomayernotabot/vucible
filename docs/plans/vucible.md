@@ -1,6 +1,6 @@
 # Vucible — Master Implementation Plan
 
-> **Status:** Round 5 (edge case + failure mode sweep)
+> **Status:** Round 6 (implementation realism check)
 > **Date:** 2026-04-28
 > **Scope:** Entire app, v1. Sits *above* `docs/PRD.md` (the WHAT) and `docs/DESIGN_DECISIONS.md` (the WHY) as the HOW — integration shapes, file paths, data flows, sequencing.
 > **Companion plans:**
@@ -181,14 +181,15 @@ src/
 | React | 19.2.4 | latest stable in scaffold |
 | TypeScript | 5+ | strict mode, no `any` unless commented |
 | Tailwind | 4 (PostCSS plugin) | scaffold default |
-| shadcn/ui | 4.5+ | already installed primitives: badge, button, card, dialog, input, label, switch, tabs, textarea, toggle-group, toggle. **Need to add:** alert, radio-group, select, separator, tooltip, progress, scroll-area. |
+| shadcn/ui | 4.5+ | already installed primitives: badge, button, card, dialog, input, label, switch, tabs, textarea, toggle-group, toggle. **Need to add:** alert, radio-group, select, separator, tooltip, progress, scroll-area, sonner. NOTE: shadcn 4.5 is **base-ui-backed** (`@base-ui/react` already in deps); some primitives have different default behavior vs. the older Radix-backed shadcn — verify each one renders and is keyboard-accessible after install. `sonner` is added via `bunx shadcn@latest add sonner` (generates a `<Toaster/>` component wrapping the `sonner` npm package). The `wizard.md` plan §5 lists a shorter add list (no progress/scroll-area/sonner) — defer to this list as authoritative; wizard.md will be aligned in a follow-up. |
 | icons | lucide-react | already in scaffold |
 | package manager | bun | per AGENTS.md — never npm/yarn/pnpm |
 | linting | eslint (next core-web-vitals) | scaffold default |
-| testing | vitest + @testing-library/react + jsdom | confirm in §12 |
-| E2E | playwright | confirm in §12 |
-| HTTP mocking | msw | for unit tests of provider clients |
-| IndexedDB wrapper | `idb` (Jake Archibald) | tiny promise wrapper; avoids hand-rolled callback hell |
+| testing | vitest + @testing-library/react + jsdom | confirm in §12. **jsdom does not implement IndexedDB** — see `fake-indexeddb` below. |
+| IndexedDB polyfill (tests) | `fake-indexeddb` | required: jsdom has no IndexedDB. Import `fake-indexeddb/auto` in `vitest.setup.ts`; without this every storage/history test errors with "indexedDB is not defined". Non-negotiable. |
+| E2E | playwright | confirm in §12. Static export served via `bunx serve out/` for CI runs. |
+| HTTP mocking | msw v2 | for unit tests of provider clients. v2 uses native `fetch`/`Request`/`Response` interceptors; **node-mode setup** lives in `vitest.setup.ts` via `setupServer(...)`. Browser-mode (service worker) is only needed if E2E tests want to mock against a real browser — defer. |
+| IndexedDB wrapper | `idb` (Jake Archibald) | tiny promise wrapper; avoids hand-rolled callback hell. Note `idb` uses the global `indexedDB` so the polyfill above must be imported *before* any `idb` import in test files. |
 | state for round flow | local `useReducer` per slice; `zustand` if cross-component sharing emerges | start with useReducer; resist zustand until needed |
 
 **Why not Redux Toolkit / TanStack Query / Jotai etc.** — none of those buy us anything for a BYOK SPA where there's no shared remote cache and no complex normalized state. Rounds are sequential and naturally local. Settings + keys are read once and rarely mutate. Adding state libs is cost without payoff at MVP.
@@ -387,6 +388,16 @@ Indexes:
 **Thumbnail generation.** On round settle, for each successful result, generate a 320×320 max-edge JPEG thumbnail using an `OffscreenCanvas` (`HTMLCanvasElement` fallback for browsers without it). Persist alongside the full bytes. `<HistoryRail/>` and `<RoundCard/>` mini-thumbnails render from `thumbnail`, never from `bytes` — keeps memory pressure linear in *visible* rounds, not total rounds.
 
 **Storage growth math.** 16 images × ~1 MB avg × 10 rounds per session × 100 sessions ≈ 16 GB worst case for full bytes. Thumbnails add ~5% (16 × 30 KB × 10 × 100 ≈ 480 MB). Most sessions will be much smaller. DD-021 says no auto-GC; manual Clear History only.
+
+### 5.3.1 TypeScript ergonomics — known friction points
+
+The persisted shapes above are correct for storage but cost a small amount of friction at call sites. Implementers should expect (and not "improve away") the following:
+
+- **`Partial<Record<Provider, ProviderConfig>>`** narrows to `ProviderConfig | undefined` on access. Every read site (`storage.providers.openai?.apiKey`) needs a guard. Helper: `getActiveProviders(storage): { openai?: ProviderConfig; gemini?: ProviderConfig }` doesn't reduce checks, but `getEnabledProviderEntries(storage): Array<[Provider, ProviderConfig]>` for iteration *does* — write that helper in `lib/storage/keys.ts` and use it everywhere.
+- **`selections: { provider: Provider; index: number }[]` + parallel `openaiResults` / `geminiResults` arrays** means every selection-driven render or read has to dispatch on `provider` to pick the array. Helper: `getResult(round, sel): RoundResult | undefined` in `lib/round/selection.ts` returns `provider === "openai" ? round.openaiResults[index] : round.geminiResults[index]`. Use everywhere; do not inline.
+- **Discriminated `RoundResult` (`status: "success" | "error"`)** is fine for pattern matching; keep it. TS narrows correctly through `if (r.status === "success")` and `switch (r.status)`. Resist the temptation to flatten into optional fields.
+- **`imageCount: 4 | 8 | 16` literal type** vs. inputs that yield `number` — use a `parseImageCount(n: number): 4 | 8 | 16 | null` guard at the form-edge in `useRoundForm`. Don't `as`-cast at consumer sites.
+- **`AspectRatioConfig` discriminated union** + the §5.1 invariant means `startRound*` and `setStorage` both need the snap helper. Centralize as `snapAspectIfNeeded(aspect, providers): AspectRatioConfig` in `lib/round/aspect.ts`; consume from all three enforcement points (§10.7).
 
 ### 5.4 In-memory shapes (not persisted)
 
@@ -1029,6 +1040,8 @@ Each phase produces something the user can interact with (or at minimum a review
 - [ ] Confirm OpenAI image model identifier (§14.A).
 - [ ] Confirm Gemini image model + endpoint version (§14.B).
 - [ ] Confirm `gpt-image-2` reference-image endpoint (`/images/generations` vs `/images/edits`) and multi-reference support (§6.1, §14.A).
+- [ ] **Build sanity check:** add `output: 'export'` to `next.config.ts` and run `bun run build` on the empty scaffold; confirm `out/` is produced cleanly with no SSR-incompatible warnings. Catches `output: 'export'` × Next 16 incompatibilities before any feature work depends on the deploy target (§14.AD).
+- [ ] **Test setup scaffold:** add `vitest.config.ts`, `vitest.setup.ts` with `import "fake-indexeddb/auto"`, msw v2 `setupServer({})` placeholder, and a single trivial passing test. Confirms the testing toolchain (jsdom + fake-indexeddb + msw + bun-or-node runner per §14.AB) works before Phase 1 needs it. ~30 min.
 
 ### Phase 1 — Foundations (storage + types)
 
@@ -1041,7 +1054,7 @@ Output: types and storage utilities with full unit-test coverage. Nothing user-v
 5. `src/lib/storage/wizard-progress.ts`, `history.ts`, `purge.ts`.
 6. Tests: storage round-trips, schema rejection, aspect invariant enforcement on write.
 
-Estimate: 2.5 hr (added ULID + invariant enforcement).
+Estimate: 4 hr. Was 2.5 hr but `fake-indexeddb` setup, the `migrations.ts` registry scaffold (§14.Y), and the §14.V `idb` ArrayBuffer round-trip verification each add real time. Test setup (`vitest.setup.ts`, msw server, fake-indexeddb auto-import) is its own ~30 min one-time cost that lands in this phase.
 
 ### Phase 2 — Provider clients (OpenAI + Gemini wrappers) + error helpers
 
@@ -1056,7 +1069,7 @@ Output: `testGenerate`, `listModels`, `generate` functions for both providers + 
 7. **Manual smoke test** (`scripts/smoke.ts`): run with real keys, verify endpoints, header shapes, and error paths. Resolves §14.A and §14.B.
 8. Unit tests with msw.
 
-Estimate: 4.5 hr (added failures.ts).
+Estimate: 8 hr. Was 4.5 hr; pressure-test bumps it. **Highest-risk phase after Phase 0.** Reasons: (a) reference-image multipart for OpenAI is unverified and may need iteration vs. live API; (b) Gemini's inline-image base64 part shape is similarly unconfirmed; (c) header-name fallback logic (`-images` vs `-requests`) needs both code paths; (d) msw v2 mocking of multipart uploads is fiddlier than JSON; (e) error mapping coverage across 7 `ErrorKind`s × 2 providers × happy/sad paths is wider than it looks. If smoke test surfaces deviations from §14.A/B, add another 2–4 hr.
 
 ### Phase 3 — Setup wizard (FR-8)
 
@@ -1064,7 +1077,7 @@ Output: a working wizard you can complete end-to-end with real keys. App is "ali
 
 Detailed sub-phases in `docs/plans/wizard.md` §12.
 
-Estimate: ~8 hr (per the wizard plan minus Phase 1 which is now done).
+Estimate: ~8 hr (wizard plan total ~10 hr minus Phase 1 storage already done in master Phase 1, minus Phase 2 provider clients done in master Phase 2). Within the wizard slice, the riskiest sub-phase is Phase 4 (UI components, 3 hr in wizard.md) — that's 12+ components including discriminated-union-driven render branches; +1 hr buffer is warranted but absorbed in the slack already in the master estimate.
 
 ### Phase 4 — App shell + theme
 
@@ -1075,7 +1088,7 @@ Output: `<AppShell/>` renders after wizard, with TopBar, theme toggle, and a "Ma
 3. `<ThemeProvider/>` + `<ThemeToggle/>` with no-flash script.
 4. Replace the wizard-slice `<MainAppPlaceholder/>` with `<AppShell/>`.
 
-Estimate: 2 hr.
+Estimate: 3 hr. Was 2 hr; bumped because the no-flash theme script (`<head>`-injected inline script that reads localStorage and sets `<html class>`) interacts non-trivially with Next 16's App Router + `output: 'export'` — `next-themes` itself works but tuning to avoid a hydration warning under static export needs verification. Adds the orphan-round sweep (§10.4) wiring on `<AppShell/>` mount.
 
 ### Phase 5 — Settings page (FR-9)
 
@@ -1088,7 +1101,7 @@ Output: Settings dialog functional with auto-save-on-blur. Re-test, clear keys, 
 5. HistoryPanel — storage estimate + Clear history.
 6. Auto-save round-trip tests (write fails → field reverts + toast).
 
-Estimate: 3.5 hr (auto-save is simpler than save-button + dirty tracking).
+Estimate: 5 hr. Was 3.5 hr. Auto-save isn't the simplification it looks: every panel needs (a) blur-handler + value-change-detection (skip writes on no-op blur), (b) optimistic UI + revert-on-quota-failure with toast, (c) rapid focus-change debounce so tab-tab-tab doesn't fire three writes, (d) §14.U deferred re-validation logic stays out — but Keys panel's "Re-test" button reuses wizard validation including the ~$0.04 cost disclosure, which means the cost-disclosure component must already be wizard-shareable (forces a small refactor at this phase if it wasn't). Concurrency cap's hard-cap-with-explainer is two states (within / above), each with its own copy.
 
 ### Phase 6 — Round 1 generation (FR-2 + FR-4 + FR-11 + FR-5 grid render)
 
@@ -1101,7 +1114,13 @@ Output: type prompt → click Generate → 16 cards stream in with live progress
 5. Eager intent persistence on round start; thumbnail generation + batched persistence on settle.
 6. `ImageCache` wired into `<ImageCardSuccess/>` for object-URL lifecycle.
 
-Estimate: 9 hr (added image cache, progress banner, new-session button, eager persistence wiring).
+Estimate: 14 hr. Was 9 hr. Pressure-test bumps it hard. This is the **highest-complexity phase** in the plan and the one most likely to slip. Hidden costs:
+- Streaming into the grid is not `useState + map` — it needs stable per-slot keys (slots aren't IDed in §5.3; either add `slotId` to `RoundResult` or derive a stable composite key `${roundId}:${provider}:${index}`), AnimatePresence-equivalent fade-in via tw-animate-css, ImageCache subscription/release in `useEffect`, and per-slot retry button wiring. Probably wants its own reducer instead of `useState`.
+- Throttle queue ordering tested with vitest fake timers + Promise scheduling is a known flake source — `await vi.runAllTimersAsync()` between actions, plus careful handling of the microtask queue. Budget 1.5 hr for tests alone.
+- `OffscreenCanvas` thumbnail generation has a `HTMLCanvasElement` fallback path; both paths need real-image testing (jsdom canvas is a known hole; tests must use a real Blob → ImageBitmap pipeline or skip-in-jsdom + run in playwright).
+- Eager intent persistence + batched settle write means two distinct IndexedDB transactions per round; failure of either is an edge case (placeholder write fails → user gets no in-flight visual, but generation proceeds; settle write fails → toast + user can save individual images). Both paths need explicit handling.
+- Live progress banner derived state subscribing to `throttle.inflight()` + `throttle.queued()` — those aren't React state; need either a polling tick or `EventTarget`-style emitter on `ProviderThrottle`. Add ~1 hr.
+- Test-gen seed (§10.4) handoff from wizard to round throttle.
 
 ### Phase 7 — Selection + commentary + round 2+ (FR-3 + FR-5 selection)
 
@@ -1113,7 +1132,7 @@ Output: pick favorites, type commentary, click Evolve → round 2 generates with
 4. `prepareReferences()` helper (§10.5) — single-encode-share-many for OpenAI Blobs and Gemini base64.
 5. Round 2+ orchestrator with prompt history; reuses the eager-intent + batched-settle persistence pattern.
 
-Estimate: 6 hr.
+Estimate: 8 hr. Was 6 hr. `prepareReferences` is a single-encode-share-many helper but exercises Blob construction, base64 encoding (browser-native `FileReader` or `Uint8Array → btoa` chunking — naive `btoa(String.fromCharCode(...arr))` blows the call stack on >~100 KB), and provider-specific re-shape. DD-015 prompt builder has multiple template branches plus the `MAX_PROMPT_CHARS` overflow-collapse logic; tests need synthetic 20-round histories. Selection state machine isn't trivial: 5th-click no-op + shake animation + only-success-clickable + per-round selections audit-trail-into-prior-round on Evolve.
 
 ### Phase 8 — History (FR-6)
 
@@ -1124,7 +1143,7 @@ Output: history rail with current-session rounds + cross-session list. Read-only
 3. Cross-session list.
 4. `<ScrollBackPanel/>` read-only view (loads full bytes only for the visible round; releases on scroll-away).
 
-Estimate: 4 hr.
+Estimate: 5 hr. Was 4 hr. Cross-session list + read-only `<ScrollBackPanel/>` is its own scroll-container mini-app; loading full bytes only for the visible round and releasing on scroll-away requires `IntersectionObserver` wiring per RoundCard. ThumbnailCache mirroring ImageCache is straightforward but tests need to verify revoke-on-eviction.
 
 ### Phase 9 — Failure handling polish (FR-10)
 
@@ -1155,7 +1174,7 @@ Estimate: 2 hr.
 5. Error boundary verification.
 6. Manual cross-browser smoke (Chrome / Firefox / Safari).
 
-Estimate: 4 hr.
+Estimate: 8 hr. Was 4 hr. A11y pass on a 12-step wizard + main canvas + grid + selection overlay + history rail + settings dialog is meaningful surface; Lighthouse perf on the wizard/empty-grid landing has to actually clear ≥90 (target in §16) which often requires shaking out unused JS, deferring shadcn primitives, etc. Cross-browser smoke on Chrome/Firefox/Safari finds at least one Safari-specific bug 80% of the time (PWA-ish IndexedDB quirks, BFCache divergence per §9.4.1, OffscreenCanvas availability).
 
 ### Phase 12 — Deploy (FR — DD-020)
 
@@ -1168,7 +1187,14 @@ Estimate: 2 hr.
 
 ### Total estimate
 
-~50 hours of focused work for a v1 (sum of phase estimates: 50.5 hr). Realistic calendar time depends on availability, but this is the scoped surface. Estimates are intentionally optimistic — round 6 (implementation realism check) will pressure-test them.
+After round-6 pressure-test: **~73 hours** of focused work for v1 (re-summed: 4 + 8 + 8 + 3 + 5 + 14 + 8 + 5 + 3 + 2 + 8 + 2 = 70 hr, plus ~3 hr ambient slack for Phase 0 CORS smoke + decision-gate handling). Original round-5 estimate was ~50 hr; the 46% bump reflects:
+- Phase 6 (round generation) underweighted streaming/keys/throttle-events (+5 hr).
+- Phase 2 (provider clients) undersized given multipart unknowns (+3.5 hr).
+- Phase 11 (a11y/perf/cross-browser polish) systematically junior-estimated (+4 hr).
+- Phase 7 (round 2+) reference encoding has hidden CPU subtleties (+2 hr).
+- Smaller bumps elsewhere.
+
+Calibration: junior or first-time-with-stack engineer should expect another +30%; senior with prior Next 16 / React 19 / shadcn-base-ui exposure can hit the 73 hr number. Estimate excludes the open-question discovery work (real-key smoke tests, CORS pivot decision) which adds 1–6 hr depending on what surfaces.
 
 ---
 
@@ -1369,6 +1395,30 @@ Lean: scaffold `migrations.ts` with an empty registry in Phase 1; document the c
 ### AA. Gemini Free tier — trust the user
 
 Wizard asks the user to self-declare their Gemini tier (DD-022). A user who recently added billing but picked "Free" out of habit gets the false-warning UX (*"Free tier doesn't include image gen"*). Reverse case: user picks a paid tier they don't actually have → 429s in production. We **do not auto-test** the Gemini tier (would cost money and defeats the free `list-models` validation). Lean: **document as "user is responsible for accurate self-declaration"** in copy near the dropdown; show the warning only if Free is picked; do not block. Confirm before Phase 3.
+
+### AB. Test runner choice for vitest
+
+Two options: (a) `bunx vitest` (uses Bun as the runner — fast, but the bun+vitest combo has had transient bugs around module mocking and `vi.mock` hoisting); (b) `bun run vitest` invoking the package script which runs vitest under Node directly. Lean: **(b)** for stability — the speed difference is negligible at this project's test count, and msw v2 + jsdom + fake-indexeddb has more documented Node-runner support. Confirm before Phase 1's first test file.
+
+### AC. Phase-dependency map (cross-phase deps not in single-phase descriptions)
+
+A rendered dependency graph would help beads-workflow ingestion:
+
+- Phase 6 round generation depends on Phase 2's `errorToMessage` / `useErrorToast` / predicates — **already moved to Phase 2** in §11.
+- Phase 6 needs the thumbnail-creation function (§10.4 step 9 generates thumbnails on settle); the `ThumbnailCache` *consumer* is Phase 8 but the *generator* is Phase 6. Confirm the generator function lives in `src/lib/round/thumbnails.ts` and is built in Phase 6, with `ThumbnailCache` (read-side) deferred to Phase 8.
+- Phase 4 (`<AppShell/>`) depends on Phase 1's `history.ts` for the orphan-round sweep on mount — already implicit in the phase ordering.
+- Phase 5 (Settings) Keys panel reuses the wizard's `<ProviderCard/>` and `<CostDisclosure/>` — confirms wizard build-out is complete enough by Phase 3 to expose these.
+- Phase 9 (`<RateLimitBanner/>` triggered after 3 consecutive 429s) — the *banner component* is Phase 9, but the *3-consecutive-429 detection state* must live somewhere stateful; lean: track in `<RoundProvider/>` from Phase 6, surface boolean to the banner consumer in Phase 9. Phase 6 builds the detector; Phase 9 builds the banner UI.
+
+Not tracked anywhere as a dependency: the BFCache `pageshow` listener (§9.4.1) — needs `<AppShell/>` (Phase 4) and the `ImageCache` (Phase 6) to coexist, so it lands in Phase 6, not Phase 4. Note this in the Phase 6 task list when it converts to beads.
+
+### AD. `output: 'export'` + Next 16 App Router compatibility
+
+DD-020 + Next 16's App Router specify static export. Plan asserts this works without proving it. Concrete unknowns:
+- `next.config.ts` with `output: 'export'` + a `"use client"` root client gate (`<WizardOrApp/>`) + `next/dynamic({ ssr: false })` chunk-splitting for wizard vs. app (§9.2). Build time: does `next build` produce a clean `out/` with both chunks? Does it fail because the dynamic import path tries to be SSR'd?
+- `output: 'export'` forbids: route handlers, middleware, `cookies()` / `headers()`, `dynamicParams: true` route segments. Plan does not use any of these — confirm by greppping the codebase pre-Phase-12.
+- `images.unoptimized: true` is set; native `<img>` tags will be used. Verified mention; no follow-up.
+- Lean: **add a Phase 0 sub-task: `bun run build` on the empty scaffold to confirm `output: 'export'` succeeds before any feature work.** 5 min, prevents Phase 12 surprise.
 
 ---
 
