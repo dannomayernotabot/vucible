@@ -9,9 +9,10 @@ interface ImageCardProps {
   readonly roundId: string;
   readonly slotKey: string;
   readonly result: RoundResult;
+  readonly onRegenerate?: () => void;
 }
 
-export function ImageCard({ roundId, slotKey, result }: ImageCardProps) {
+export function ImageCard({ roundId, slotKey, result, onRegenerate }: ImageCardProps) {
   switch (result.status) {
     case "loading":
       return <ImageCardLoading />;
@@ -25,6 +26,6 @@ export function ImageCard({ roundId, slotKey, result }: ImageCardProps) {
         />
       );
     case "error":
-      return <ImageCardError error={result.error} />;
+      return <ImageCardError error={result.error} onRegenerate={onRegenerate} />;
   }
 }

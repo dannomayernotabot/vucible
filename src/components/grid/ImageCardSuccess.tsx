@@ -30,7 +30,7 @@ export function ImageCardSuccess({
   if (!url) return null;
 
   return (
-    <div className="overflow-hidden rounded-lg">
+    <div className="animate-in fade-in duration-300 overflow-hidden rounded-lg motion-reduce:animate-none">
       <img
         src={url}
         alt="Generated image"

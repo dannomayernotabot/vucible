@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, fireEvent } from "@testing-library/react";
 import { ImageCard } from "./ImageCard";
 import { ImageCardLoading } from "./ImageCardLoading";
 import { ImageCardError } from "./ImageCardError";
@@ -14,9 +14,15 @@ vi.mock("@/lib/round/image-cache", () => ({
   },
 }));
 
-vi.mock("@/lib/round/failures", () => ({
-  errorToMessage: vi.fn((err: NormalizedError) => "Error: " + err.message),
-}));
+vi.mock("@/lib/round/failures", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/round/failures")>(
+    "@/lib/round/failures",
+  );
+  return {
+    ...actual,
+    errorToMessage: vi.fn((err: NormalizedError) => "Error: " + err.message),
+  };
+});
 
 afterEach(cleanup);
 
@@ -33,6 +39,27 @@ describe("ImageCardError", () => {
     render(<ImageCardError error={error} />);
     expect(screen.getByRole("alert")).toBeDefined();
     expect(screen.getByText("Error: Too many requests")).toBeDefined();
+  });
+
+  it("shows Regenerate button for retryable errors when handler provided", () => {
+    const onRegenerate = vi.fn();
+    const error: NormalizedError = { kind: "rate_limited", message: "Too many requests" };
+    render(<ImageCardError error={error} onRegenerate={onRegenerate} />);
+    const btn = screen.getByRole("button", { name: "Regenerate" });
+    fireEvent.click(btn);
+    expect(onRegenerate).toHaveBeenCalledOnce();
+  });
+
+  it("hides Regenerate button for non-retryable errors", () => {
+    const error: NormalizedError = { kind: "content_blocked", message: "Blocked" };
+    render(<ImageCardError error={error} onRegenerate={() => {}} />);
+    expect(screen.queryByRole("button", { name: "Regenerate" })).toBeNull();
+  });
+
+  it("hides Regenerate button when no handler provided", () => {
+    const error: NormalizedError = { kind: "rate_limited", message: "Too many requests" };
+    render(<ImageCardError error={error} />);
+    expect(screen.queryByRole("button", { name: "Regenerate" })).toBeNull();
   });
 });
 
