@@ -413,7 +413,7 @@ The persisted shapes above are correct for storage but cost a small amount of fr
 
 ```ts
 const OPENAI_BASE = "https://api.openai.com/v1";
-const OPENAI_IMAGE_MODEL = "gpt-image-2"; // OPEN QUESTION §14.A — confirm at integration
+const OPENAI_IMAGE_MODEL = "gpt-image-1"; // CONFIRMED §14.A — gpt-image-2 API access pending; use gpt-image-1 for MVP
 ```
 
 Functions:
@@ -459,8 +459,8 @@ export async function generate(
 ### 6.2 Gemini client — `src/lib/providers/gemini.ts`
 
 ```ts
-const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1";
-const GEMINI_IMAGE_MODEL = "gemini-3-pro-image"; // OPEN QUESTION §14.B
+const GEMINI_BASE = "https://generativelanguage.googleapis.com"; // v1 for listModels, v1beta for generateContent (image gen requires v1beta)
+const GEMINI_IMAGE_MODEL = "gemini-2.5-flash-image"; // CONFIRMED §14.B — production model, Gemini-native image gen
 ```
 
 Functions:
@@ -1290,13 +1290,25 @@ Produces `out/` directory with the static site. Vercel auto-deploys on push to `
 
 These block implementation if unresolved. Each has a recommended lean.
 
-### A. OpenAI image model identifier + reference-image endpoint shape (§6.1)
+### ~~A. OpenAI image model identifier + reference-image endpoint shape (§6.1)~~ — PARTIALLY RESOLVED
 
-Confirm: (1) model string (`gpt-image-2` vs alternatives), (2) reference-image endpoint (`/images/generations` with `image` field vs `/images/edits`), (3) multi-reference-image support (single reference vs `image[]` array up to K=4), (4) presence and shape of `response_format: "b64_json"`, (5) actual rate-limit header names (`x-ratelimit-limit-images` vs `-requests`). Resolved by Phase 0/2 smoke tests.
+**Confirmed (2026-04-30 research):**
+1. **Model string:** `gpt-image-1` is the safe/available model. `gpt-image-1.5` also available. `gpt-image-2` launched 2026-04-21 but developer API access opens early May 2026 — may not be available yet. **Use `gpt-image-1` for MVP; upgrade to `gpt-image-2` when API access opens.**
+2. **Reference-image endpoint:** `gpt-image-1` unified generation+editing under `POST /v1/images/generations` with optional `image` field. Expect same for `gpt-image-2`. Confirmed by docs.
+3. **Multi-reference:** Unconfirmed for `gpt-image-2`. Plan B (composite K images into single grid) remains fallback. Resolve during Phase 2 smoke with real keys.
+4. **`response_format`:** `gpt-image-1` supports `b64_json`. Confirm on `gpt-image-2` during Phase 2 smoke.
+5. **Rate-limit headers:** `x-ratelimit-limit-requests` confirmed. `-images` variant unverified — Phase 2 smoke test records actual headers.
+6. **CORS:** `api.openai.com` returns `Access-Control-Allow-Origin: *` on success responses. **Gotcha:** 401 responses from Cloudflare edge do NOT include CORS headers — browser sees opaque error. Handle gracefully in key validation (wizard must catch "Failed to fetch" as possible invalid key, not just CORS block).
 
-### B. Gemini image model + endpoint version (§6.2)
+### ~~B. Gemini image model + endpoint version (§6.2)~~ — RESOLVED
 
-Confirm exact model string and `v1` vs `v1beta`. Also confirm: multipart `:generateContent` shape with inline image parts works browser-origin (CORS — see §9.6 / §14.T). Resolved by Phase 0/2 smoke tests.
+**Confirmed (2026-04-30 research):**
+1. **Model string:** `gemini-2.5-flash-image` (recommended, production). Also available: `gemini-2.0-flash-preview-image-generation`, `gemini-3.1-flash-image-preview` (newer, 4K output). **Use `gemini-2.5-flash-image` for MVP.** Note: this is a Gemini-native image model, NOT the separate Imagen API (deprecated June 2026).
+2. **Endpoint version:** `v1beta` for generateContent with image output. `v1` for list-models (auth validation). The image generation models require `v1beta`.
+3. **CORS:** `generativelanguage.googleapis.com` mirrors `Origin` header in `Access-Control-Allow-Origin` (better than OpenAI — error responses also include CORS headers, so browser can read error messages).
+4. **Reference image encoding:** Inline base64 parts in the `contents[].parts[]` array with `{ inlineData: { mimeType: "image/png", data: "<base64>" } }`. Works from browser.
+5. **Image output:** Requires `generationConfig: { responseModalities: ["Text", "Image"] }`. Image-only output NOT supported; must include both Text and Image modalities.
+6. **Auth:** Both `?key=` query param and `x-goog-api-key` header work. Prefer header for security (keys don't appear in server logs).
 
 ### C. Test-gen prompt content (`docs/plans/wizard.md` §15.C)
 
@@ -1366,14 +1378,16 @@ Current pattern holds throttle slots for the entire retry chain, including `Retr
 
 Detection is unreliable and behaves differently across browsers. Three options: (a) silently best-effort (current lean) — keys persist for the tab session, history wipes on close; (b) detect and show a non-blocking banner; (c) detect and refuse to enter the wizard until the user opens a non-private tab. Lean: (b). Decide before Phase 3.
 
-### T. CORS browser-origin viability (§9.6) — load-bearing
+### T. CORS browser-origin viability (§9.6) — load-bearing — RESEARCH INDICATES T1
 
 Phase 0 smoke test resolves to one of:
-- (T1) Both providers allow browser-origin calls with permissive CORS → plan proceeds unchanged.
+- **(T1) Both providers allow browser-origin calls with permissive CORS → plan proceeds unchanged.** ← **Research (2026-04-30) strongly indicates this outcome.** OpenAI returns `Access-Control-Allow-Origin: *` on success; Gemini mirrors `Origin`. Both confirmed working from browser. See §14.A and §14.B for details.
 - (T2) OpenAI blocks → escalate per §9.6 mitigation. Author favors **option A (thin Vercel Edge proxy for OpenAI only)** over dropping OpenAI; would require new DD-024 documenting the deviation from DD-001.
 - (T3) Gemini blocks → drop Gemini; the wizard tier dropdown already supports OpenAI-only flow.
 
 **Decision deadline:** before Phase 1 starts (no Phase 1 work is salvageable if the architecture pivots).
+
+**Known caveat (from research):** OpenAI's Cloudflare edge returns 401 WITHOUT CORS headers when the API key is invalid. The browser sees "Failed to fetch" (opaque error), not a clean JSON 401. This is NOT a CORS block — it's an auth-path edge case. Wizard key validation must handle this: if fetch throws on OpenAI test-gen, surface "API key may be invalid" rather than "CORS blocked". The smoke test (`scripts/cors-smoke.html`) documents this distinction.
 
 ### U. Stale `validatedAt` re-validation policy
 
