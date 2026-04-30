@@ -129,6 +129,12 @@
   animation: shake 0.3s ease-in-out;
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .animate-shake {
+    animation: none;
+  }
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;

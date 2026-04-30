@@ -25,7 +25,7 @@ export function SelectionOverlay({
     if (disabled) return;
     if (!selected && atMax) {
       const el = wrapperRef.current;
-      if (el) {
+      if (el && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
         el.classList.remove("animate-shake");
         void el.offsetWidth;
         el.classList.add("animate-shake");
