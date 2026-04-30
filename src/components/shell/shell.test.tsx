@@ -46,7 +46,7 @@ describe("TopBar", () => {
     expect(btn.hasAttribute("disabled")).toBe(false);
   });
 
-  it("renders settings button (disabled stub)", () => {
+  it("renders settings button", () => {
     render(
       <ThemeProvider>
         <TopBar />
@@ -54,7 +54,6 @@ describe("TopBar", () => {
     );
     const btn = screen.getByRole("button", { name: "Settings" });
     expect(btn).toBeDefined();
-    expect(btn.hasAttribute("disabled")).toBe(true);
   });
 });
 

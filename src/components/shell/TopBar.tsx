@@ -2,6 +2,7 @@
 
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "./ThemeToggle";
+import { SettingsDialog } from "@/components/settings/SettingsDialog";
 
 export function TopBar() {
   return (
@@ -13,9 +14,13 @@ export function TopBar() {
           <HistoryIcon />
         </Button>
         <ThemeToggle />
-        <Button variant="ghost" size="icon" aria-label="Settings" disabled>
-          <SettingsIcon />
-        </Button>
+        <SettingsDialog
+          trigger={
+            <Button variant="ghost" size="icon" aria-label="Settings">
+              <SettingsIcon />
+            </Button>
+          }
+        />
       </div>
     </header>
   );
