@@ -20,6 +20,7 @@ interface ModelSectionProps {
   readonly selections: readonly Selection[];
   readonly onToggleSelection: (provider: Provider, index: number) => void;
   readonly onRegenerate: (provider: Provider, index: number) => void;
+  readonly onZoom?: (provider: Provider, index: number) => void;
 }
 
 export function ModelSection({
@@ -29,6 +30,7 @@ export function ModelSection({
   selections,
   onToggleSelection,
   onRegenerate,
+  onZoom,
 }: ModelSectionProps) {
   if (results.length === 0) return null;
 
@@ -56,6 +58,7 @@ export function ModelSection({
               atMax={atMax}
               onToggleSelection={() => onToggleSelection(provider, index)}
               onRegenerate={() => onRegenerate(provider, index)}
+              onZoom={onZoom ? () => onZoom(provider, index) : undefined}
             />
           );
         })}

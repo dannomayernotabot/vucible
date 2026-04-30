@@ -1,11 +1,13 @@
 "use client";
 
-import { useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useRound, MAX_SELECTIONS } from "@/components/round/RoundProvider";
 import { getStorage } from "@/lib/storage/keys";
 import { ModelSection } from "./ModelSection";
 import { CommentaryInput } from "@/components/round/CommentaryInput";
 import { RateLimitBanner } from "@/components/feedback/RateLimitBanner";
+import { ImageZoom } from "./ImageZoom";
+import type { Provider } from "@/lib/providers/types";
 
 const P50_GEN_LATENCY_S = 18;
 
@@ -27,6 +29,20 @@ function countSuccesses(results: readonly { status: string }[]): number {
 export function ResultGrid() {
   const { round, isRunning, done, total, queued, selections, toggleSelection, regenerateSlot } =
     useRound();
+
+  const [zoomState, setZoomState] = useState<{
+    open: boolean;
+    provider: Provider;
+    index: number;
+  }>({ open: false, provider: "openai", index: 0 });
+
+  const handleZoom = useCallback((provider: Provider, index: number) => {
+    setZoomState({ open: true, provider, index });
+  }, []);
+
+  const handleZoomOpenChange = useCallback((open: boolean) => {
+    setZoomState((prev) => ({ ...prev, open }));
+  }, []);
 
   const longRoundBanner = useMemo(() => {
     if (!round || !isRunning) return null;
@@ -75,6 +91,7 @@ export function ResultGrid() {
         selections={selections}
         onToggleSelection={toggleSelection}
         onRegenerate={regenerateSlot}
+        onZoom={handleZoom}
       />
       <ModelSection
         roundId={round.id}
@@ -83,6 +100,7 @@ export function ResultGrid() {
         selections={selections}
         onToggleSelection={toggleSelection}
         onRegenerate={regenerateSlot}
+        onZoom={handleZoom}
       />
 
       {settled && successCount > 0 && <CommentaryInput />}
@@ -112,6 +130,16 @@ export function ResultGrid() {
           All cards failed — regenerate or start a new prompt
         </p>
       )}
+
+      <ImageZoom
+        roundId={round.id}
+        openaiResults={round.openaiResults}
+        geminiResults={round.geminiResults}
+        initialProvider={zoomState.provider}
+        initialIndex={zoomState.index}
+        open={zoomState.open}
+        onOpenChange={handleZoomOpenChange}
+      />
     </div>
   );
 }

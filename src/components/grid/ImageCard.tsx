@@ -15,6 +15,7 @@ interface ImageCardProps {
   readonly atMax: boolean;
   readonly onToggleSelection: () => void;
   readonly onRegenerate?: () => void;
+  readonly onZoom?: () => void;
 }
 
 export function ImageCard({
@@ -26,6 +27,7 @@ export function ImageCard({
   atMax,
   onToggleSelection,
   onRegenerate,
+  onZoom,
 }: ImageCardProps) {
   switch (result.status) {
     case "loading":
@@ -44,6 +46,7 @@ export function ImageCard({
             slotKey={slotKey}
             bytes={result.bytes}
             mimeType={result.mimeType}
+            onZoom={onZoom}
           />
         </SelectionOverlay>
       );
