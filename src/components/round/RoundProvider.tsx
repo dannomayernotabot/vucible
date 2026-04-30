@@ -34,7 +34,9 @@ interface RoundContextValue {
   readonly queued: number;
   readonly consecutive429Count: Record<Provider, number>;
   readonly selections: readonly Selection[];
+  readonly commentary: string;
   readonly toggleSelection: (provider: Provider, index: number) => void;
+  readonly setCommentary: (value: string) => void;
   readonly startRound: (input: StartRoundInput) => void;
   readonly abortRound: () => void;
 }
@@ -65,6 +67,7 @@ export function RoundProvider({
   const [round, setRound] = useState<Round | null>(null);
   const [queued, setQueued] = useState(0);
   const [selections, setSelections] = useState<readonly Selection[]>([]);
+  const [commentary, setCommentary] = useState("");
   const [consecutive429, setConsecutive429] = useState<Record<Provider, number>>({
     openai: 0,
     gemini: 0,
@@ -146,6 +149,7 @@ export function RoundProvider({
       abortRef.current = controller;
 
       setSelections([]);
+      setCommentary("");
       setConsecutive429({ openai: 0, gemini: 0 });
 
       startRoundOne(input).then(({ round: r, sessionId }) => {
@@ -187,11 +191,13 @@ export function RoundProvider({
       queued,
       consecutive429Count: consecutive429,
       selections,
+      commentary,
       toggleSelection,
+      setCommentary,
       startRound,
       abortRound,
     }),
-    [round, isRunning, done, total, queued, consecutive429, selections, toggleSelection, startRound, abortRound],
+    [round, isRunning, done, total, queued, consecutive429, selections, commentary, toggleSelection, setCommentary, startRound, abortRound],
   );
 
   return (

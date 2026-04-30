@@ -153,19 +153,18 @@ export async function fanOut(opts: FanOutOptions): Promise<Round> {
     const index = i;
     const task = async () => {
       const doGenerate = async () => {
-        const result = await withRetry(
-          (sig) =>
-            openaiGenerate(openaiKey, {
+        return await withRetry(
+          async (sig) => {
+            const r = await openaiGenerate(openaiKey, {
               prompt: round.promptSent,
               size: openaiSize,
               signal: sig,
-            }),
+            });
+            if (!r.ok) throw r.error;
+            return r;
+          },
           { signal },
         );
-        if (!result.ok) {
-          throw result.error;
-        }
-        return result;
       };
 
       try {
@@ -200,19 +199,18 @@ export async function fanOut(opts: FanOutOptions): Promise<Round> {
     const index = i;
     const task = async () => {
       const doGenerate = async () => {
-        const result = await withRetry(
-          (sig) =>
-            geminiGenerate(geminiKey, {
+        return await withRetry(
+          async (sig) => {
+            const r = await geminiGenerate(geminiKey, {
               prompt: round.promptSent,
               aspectRatio: geminiRatio,
               signal: sig,
-            }),
+            });
+            if (!r.ok) throw r.error;
+            return r;
+          },
           { signal },
         );
-        if (!result.ok) {
-          throw result.error;
-        }
-        return result;
       };
 
       try {
@@ -270,7 +268,18 @@ export async function fanOut(opts: FanOutOptions): Promise<Round> {
     settledAt: new Date().toISOString(),
   };
 
-  await finalizeRound(settled);
+  try {
+    await finalizeRound(settled);
+  } catch (err) {
+    if (
+      err instanceof DOMException &&
+      err.name === "QuotaExceededError"
+    ) {
+      console.warn("[orchestrate] Browser storage full — round saved in memory only");
+    } else {
+      throw err;
+    }
+  }
 
   return settled;
 }
