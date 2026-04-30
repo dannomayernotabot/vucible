@@ -18,6 +18,7 @@ import { snapAspectIfNeeded } from "./aspect";
 import { generate as openaiGenerate } from "@/lib/providers/openai";
 import { generate as geminiGenerate } from "@/lib/providers/gemini";
 import { withRetry } from "./retry";
+import { generateThumbnail } from "./thumbnails";
 import type { ProviderThrottle } from "./throttle";
 
 export interface StartRoundInput {
@@ -242,6 +243,25 @@ export async function fanOut(opts: FanOutOptions): Promise<Round> {
   }
 
   await Promise.allSettled(tasks);
+
+  const allResults = [
+    ...openaiResults.map((r, i) => ({ results: openaiResults, index: i, r })),
+    ...geminiResults.map((r, i) => ({ results: geminiResults, index: i, r })),
+  ];
+
+  await Promise.all(
+    allResults
+      .filter(({ r }) => r.status === "success")
+      .map(async ({ results, index, r }) => {
+        if (r.status !== "success") return;
+        try {
+          const { thumbnail } = await generateThumbnail(r.bytes, r.mimeType);
+          results[index] = { ...r, thumbnail };
+        } catch {
+          // Thumbnail failure is non-fatal; keep full image as fallback
+        }
+      }),
+  );
 
   const settled: Round = {
     ...round,
