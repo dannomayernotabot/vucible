@@ -9,6 +9,7 @@ import type { Provider } from "@/lib/providers/types";
 interface RoundCardProps {
   readonly round: Round;
   readonly isActive: boolean;
+  readonly isViewed?: boolean;
   readonly onClick: () => void;
 }
 
@@ -23,7 +24,7 @@ function thumbUrl(
   return thumbnailCache.get(roundId, key, result.thumbnail, result.mimeType);
 }
 
-export function RoundCard({ round, isActive, onClick }: RoundCardProps) {
+export function RoundCard({ round, isActive, isViewed, onClick }: RoundCardProps) {
   const thumbs = useMemo(() => {
     const items: { key: string; url: string | null; status: RoundResult["status"] }[] = [];
     for (let i = 0; i < round.openaiResults.length; i++) {
@@ -63,7 +64,7 @@ export function RoundCard({ round, isActive, onClick }: RoundCardProps) {
       type="button"
       onClick={onClick}
       className={`w-full rounded-md border p-2 text-left transition-colors hover:bg-accent ${
-        isActive ? "border-primary bg-accent" : "border-border"
+        isViewed ? "border-primary ring-2 ring-primary/30 bg-accent" : isActive ? "border-primary bg-accent" : "border-border"
       }`}
       aria-label={`Round ${round.number}`}
       aria-current={isActive ? "true" : undefined}

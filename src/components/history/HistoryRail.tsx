@@ -6,19 +6,22 @@ import { listRoundsBySession } from "@/lib/storage/history";
 import type { Round } from "@/lib/storage/schema";
 import { RoundCard } from "./RoundCard";
 import { SessionsList } from "./SessionsList";
+import { ScrollBackPanel } from "./ScrollBackPanel";
 
 interface HistoryRailProps {
   readonly open: boolean;
   readonly onClose: () => void;
+  readonly onViewRound?: (roundId: string | null) => void;
 }
 
 type View = "rounds" | "sessions";
 
-export function HistoryRail({ open, onClose }: HistoryRailProps) {
+export function HistoryRail({ open, onClose, onViewRound }: HistoryRailProps) {
   const { round: activeRound } = useRound();
   const [rounds, setRounds] = useState<Round[]>([]);
   const [view, setView] = useState<View>("rounds");
   const [viewedSessionId, setViewedSessionId] = useState<string | undefined>();
+  const [viewedRoundId, setViewedRoundId] = useState<string | null>(null);
 
   const sessionId = viewedSessionId ?? activeRound?.sessionId;
 
@@ -34,8 +37,10 @@ export function HistoryRail({ open, onClose }: HistoryRailProps) {
     if (!open) {
       setView("rounds");
       setViewedSessionId(undefined);
+      setViewedRoundId(null);
+      onViewRound?.(null);
     }
-  }, [open]);
+  }, [open, onViewRound]);
 
   const handleSelectSession = useCallback((id: string) => {
     setViewedSessionId(id);
@@ -103,7 +108,12 @@ export function HistoryRail({ open, onClose }: HistoryRailProps) {
                     key={r.id}
                     round={r}
                     isActive={activeRound?.id === r.id}
-                    onClick={() => {}}
+                    isViewed={viewedRoundId === r.id}
+                    onClick={() => {
+                      const newId = viewedRoundId === r.id ? null : r.id;
+                      setViewedRoundId(newId);
+                      onViewRound?.(newId);
+                    }}
                   />
                 ))}
               </div>
