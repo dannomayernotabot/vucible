@@ -55,11 +55,11 @@ export async function withRetry<T>(
       if (attempt === maxAttempts - 1) throw err;
 
       const retryAfterMs =
-        err.retryAfterSeconds != null
+        err.retryAfterSeconds !== undefined && err.retryAfterSeconds !== null
           ? err.retryAfterSeconds * 1000
           : undefined;
 
-      if (retryAfterMs != null && retryAfterMs > MAX_RETRY_AFTER_MS) throw err;
+      if (retryAfterMs !== undefined && retryAfterMs > MAX_RETRY_AFTER_MS) throw err;
 
       const delayMs = retryAfterMs ?? jitteredBackoff(attempt);
       await abortableDelay(delayMs, signal);
