@@ -114,6 +114,18 @@ describe("DefaultsPanel auto-save", () => {
     expect(currentImageCount).toBe(8);
   });
 
+  it("reverts image count when setStorage throws (quota revert)", async () => {
+    mockSetStorage.mockImplementationOnce(() => {
+      throw new Error("storage write failed");
+    });
+    render(<DefaultsPanel />);
+    fireEvent.click(screen.getByText("16"));
+    await waitFor(() => {
+      expect(mockSetStorage).toHaveBeenCalled();
+    });
+    expect(mockStorageData.defaults.imageCount).toBe(8);
+  });
+
   it("with Gemini configured, aspect picker shows discrete grid only", () => {
     mockStorageData = {
       ...JSON.parse(JSON.stringify(MOCK_STORAGE_BASE)),
@@ -150,7 +162,25 @@ describe("ConcurrencyPanel auto-save", () => {
     });
   });
 
-  it("clamps above-cap value to ipm on blur (no extra write)", async () => {
+  it("clamps above-cap value to ipm on blur (no write when clamped equals stored)", () => {
+    render(<ConcurrencyPanel />);
+    const input = screen.getByLabelText("OpenAI concurrency cap");
+    fireEvent.change(input, { target: { value: "999" } });
+    fireEvent.blur(input);
+    expect(mockSetStorage).not.toHaveBeenCalled();
+    expect((input as HTMLInputElement).value).toBe("20");
+  });
+
+  it("clamps above-cap value and writes when stored differs", async () => {
+    mockStorageData = {
+      ...JSON.parse(JSON.stringify(MOCK_STORAGE_BASE)),
+      providers: {
+        openai: {
+          ...JSON.parse(JSON.stringify(MOCK_STORAGE_BASE)).providers.openai,
+          concurrencyCap: 10,
+        },
+      },
+    };
     render(<ConcurrencyPanel />);
     const input = screen.getByLabelText("OpenAI concurrency cap");
     fireEvent.change(input, { target: { value: "999" } });
@@ -202,6 +232,25 @@ describe("ConcurrencyPanel auto-save", () => {
     expect(mockStorageData.providers.openai!.concurrencyCap).toBe(20);
     // UI input reverts to original cap
     expect((input as HTMLInputElement).value).toBe("20");
+  });
+
+  it("no-op blur: no write when value matches stored cap", () => {
+    render(<ConcurrencyPanel />);
+    const input = screen.getByLabelText("OpenAI concurrency cap");
+    fireEvent.blur(input);
+    expect(mockSetStorage).not.toHaveBeenCalled();
+  });
+
+  it("rapid blurs after value change produce single write", async () => {
+    render(<ConcurrencyPanel />);
+    const input = screen.getByLabelText("OpenAI concurrency cap");
+    fireEvent.change(input, { target: { value: "5" } });
+    fireEvent.blur(input);
+    fireEvent.blur(input);
+    fireEvent.blur(input);
+    await waitFor(() => {
+      expect(mockSetStorage).toHaveBeenCalledOnce();
+    });
   });
 
   it("clamps to 1 when value is 0 or negative", async () => {

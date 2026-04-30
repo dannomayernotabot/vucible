@@ -55,6 +55,10 @@ function ConcurrencyRow({
     if (!current) return;
     const providerConfig = current.providers[provider];
     if (!providerConfig) return;
+    if (clamped === providerConfig.concurrencyCap) {
+      setValue(clamped);
+      return;
+    }
     try {
       setStorage({
         ...current,

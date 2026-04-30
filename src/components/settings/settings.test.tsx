@@ -13,7 +13,7 @@ const MOCK_STORAGE = {
       apiKey: "sk-test",
       tier: "tier2",
       ipm: 20,
-      concurrencyCap: 20,
+      concurrencyCap: 5,
       validatedAt: new Date().toISOString(),
     },
   },
