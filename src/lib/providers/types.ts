@@ -3,11 +3,11 @@ export type Provider = "openai" | "gemini";
 export type Tier = "free" | "tier1" | "tier2" | "tier3" | "tier4" | "tier5";
 
 export interface ProviderConfig {
-  apiKey: string;
-  tier: Tier;
-  ipm: number;
-  concurrencyCap: number;
-  validatedAt: string;
+  readonly apiKey: string;
+  readonly tier: Tier;
+  readonly ipm: number;
+  readonly concurrencyCap: number;
+  readonly validatedAt: string;
 }
 
 export type GeminiSupportedRatio =
@@ -23,18 +23,20 @@ export type GeminiSupportedRatio =
   | "21:9";
 
 export type AspectRatioConfig =
-  | { kind: "discrete"; ratio: GeminiSupportedRatio }
-  | { kind: "freeform"; width: number; height: number };
+  | { readonly kind: "discrete"; readonly ratio: GeminiSupportedRatio }
+  | { readonly kind: "freeform"; readonly width: number; readonly height: number };
+
+export type ImageCount = 4 | 8 | 16;
 
 export interface UserDefaults {
-  imageCount: 4 | 8 | 16;
-  aspectRatio: AspectRatioConfig;
-  theme: "system" | "dark" | "light";
+  readonly imageCount: ImageCount;
+  readonly aspectRatio: AspectRatioConfig;
+  readonly theme: "system" | "dark" | "light";
 }
 
 export interface VucibleStorageV1 {
-  schemaVersion: 1;
-  providers: Partial<Record<Provider, ProviderConfig>>;
-  defaults: UserDefaults;
-  createdAt: string;
+  readonly schemaVersion: 1;
+  readonly providers: Partial<Record<Provider, ProviderConfig>>;
+  readonly defaults: UserDefaults;
+  readonly createdAt: string;
 }
