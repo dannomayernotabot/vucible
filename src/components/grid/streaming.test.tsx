@@ -65,8 +65,9 @@ describe("ModelSection streaming reconciliation", () => {
       status: "loading" as const,
     }));
 
+    const noopToggle = vi.fn();
     const { rerender } = render(
-      <ModelSection roundId="r1" provider="openai" results={loadingResults} />,
+      <ModelSection roundId="r1" provider="openai" results={loadingResults} selections={[]} onToggleSelection={noopToggle} />,
     );
 
     expect(screen.getAllByRole("status")).toHaveLength(4);
@@ -85,7 +86,7 @@ describe("ModelSection streaming reconciliation", () => {
     ];
 
     await act(async () => {
-      rerender(<ModelSection roundId="r1" provider="openai" results={partialResults} />);
+      rerender(<ModelSection roundId="r1" provider="openai" results={partialResults} selections={[]} onToggleSelection={noopToggle} />);
     });
 
     expect(screen.getAllByRole("status")).toHaveLength(2);
@@ -113,10 +114,11 @@ describe("ModelSection streaming reconciliation", () => {
       },
     ];
 
+    const noopToggle = vi.fn();
     render(
       <div>
-        <ModelSection roundId="r1" provider="openai" results={openaiResults} />
-        <ModelSection roundId="r1" provider="gemini" results={geminiResults} />
+        <ModelSection roundId="r1" provider="openai" results={openaiResults} selections={[]} onToggleSelection={noopToggle} />
+        <ModelSection roundId="r1" provider="gemini" results={geminiResults} selections={[]} onToggleSelection={noopToggle} />
       </div>,
     );
 

@@ -4,6 +4,7 @@ import { ImageCard } from "./ImageCard";
 import { ImageCardLoading } from "./ImageCardLoading";
 import { ImageCardError } from "./ImageCardError";
 import { ImageCardSuccess } from "./ImageCardSuccess";
+import { SelectionOverlay } from "./SelectionOverlay";
 import { ModelSection } from "./ModelSection";
 import type { RoundResult } from "@/lib/storage/schema";
 import type { NormalizedError } from "@/lib/providers/errors";
@@ -27,6 +28,13 @@ vi.mock("@/lib/round/failures", async () => {
     errorToMessage: vi.fn((err: NormalizedError) => "Error: " + err.message),
   };
 });
+
+const defaultSelectionProps = {
+  selected: false,
+  selectionIndex: null,
+  atMax: false,
+  onToggleSelection: vi.fn(),
+} as const;
 
 afterEach(() => {
   cleanup();
@@ -78,6 +86,7 @@ describe("ImageCard", () => {
         roundId="r1"
         slotKey="r1:openai:0"
         result={{ status: "loading" }}
+        {...defaultSelectionProps}
       />,
     );
     expect(screen.getByRole("status")).toBeDefined();
@@ -88,7 +97,14 @@ describe("ImageCard", () => {
       status: "error",
       error: { kind: "auth_failed", message: "Invalid key" },
     };
-    render(<ImageCard roundId="r1" slotKey="r1:openai:0" result={result} />);
+    render(
+      <ImageCard
+        roundId="r1"
+        slotKey="r1:openai:0"
+        result={result}
+        {...defaultSelectionProps}
+      />,
+    );
     expect(screen.getByRole("alert")).toBeDefined();
   });
 
@@ -100,20 +116,59 @@ describe("ImageCard", () => {
       mimeType: "image/png",
       meta: {},
     };
-    render(<ImageCard roundId="r1" slotKey="r1:openai:0" result={result} />);
+    render(
+      <ImageCard
+        roundId="r1"
+        slotKey="r1:openai:0"
+        result={result}
+        {...defaultSelectionProps}
+      />,
+    );
     const img = screen.getByRole("img");
     expect(img.getAttribute("src")).toBe("blob:test-url");
+  });
+
+  it("wraps success card with SelectionOverlay", () => {
+    const result: RoundResult = {
+      status: "success",
+      bytes: new ArrayBuffer(10),
+      thumbnail: new ArrayBuffer(5),
+      mimeType: "image/png",
+      meta: {},
+    };
+    render(
+      <ImageCard
+        roundId="r1"
+        slotKey="r1:openai:0"
+        result={result}
+        selected={true}
+        selectionIndex={0}
+        atMax={false}
+        onToggleSelection={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("checkbox", { checked: true })).toBeDefined();
   });
 });
 
 describe("ModelSection", () => {
+  const sectionDefaults = {
+    selections: [],
+    onToggleSelection: vi.fn(),
+  } as const;
+
   it("renders section header with provider name and count", () => {
     const results: RoundResult[] = [
       { status: "loading" },
       { status: "loading" },
     ];
     render(
-      <ModelSection roundId="r1" provider="openai" results={results} />,
+      <ModelSection
+        roundId="r1"
+        provider="openai"
+        results={results}
+        {...sectionDefaults}
+      />,
     );
     expect(screen.getByText(/OpenAI/)).toBeDefined();
     expect(screen.getByText(/2 images/)).toBeDefined();
@@ -121,7 +176,12 @@ describe("ModelSection", () => {
 
   it("renders nothing for empty results", () => {
     const { container } = render(
-      <ModelSection roundId="r1" provider="openai" results={[]} />,
+      <ModelSection
+        roundId="r1"
+        provider="openai"
+        results={[]}
+        {...sectionDefaults}
+      />,
     );
     expect(container.innerHTML).toBe("");
   });
@@ -133,7 +193,12 @@ describe("ModelSection", () => {
       { status: "loading" },
     ];
     render(
-      <ModelSection roundId="r1" provider="gemini" results={results} />,
+      <ModelSection
+        roundId="r1"
+        provider="gemini"
+        results={results}
+        {...sectionDefaults}
+      />,
     );
     expect(screen.getAllByRole("status")).toHaveLength(3);
   });
@@ -181,5 +246,205 @@ describe("ImageCardSuccess refcount lifecycle", () => {
 
     unmount();
     expect(mockRelease).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("streaming card transitions", () => {
+  it("transitions from loading shimmer to rendered image", () => {
+    const loading: RoundResult = { status: "loading" };
+    const success: RoundResult = {
+      status: "success",
+      bytes: new ArrayBuffer(10),
+      thumbnail: new ArrayBuffer(5),
+      mimeType: "image/png",
+      meta: {},
+    };
+
+    const { rerender } = render(
+      <ImageCard
+        roundId="r1"
+        slotKey="r1:openai:0"
+        result={loading}
+        {...defaultSelectionProps}
+      />,
+    );
+    expect(screen.getByRole("status")).toBeDefined();
+    expect(screen.queryByRole("img")).toBeNull();
+
+    rerender(
+      <ImageCard
+        roundId="r1"
+        slotKey="r1:openai:0"
+        result={success}
+        {...defaultSelectionProps}
+      />,
+    );
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.getByRole("img")).toBeDefined();
+  });
+
+  it("transitions from loading to error", () => {
+    const loading: RoundResult = { status: "loading" };
+    const error: RoundResult = {
+      status: "error",
+      error: { kind: "rate_limited", message: "429" },
+    };
+
+    const { rerender } = render(
+      <ImageCard
+        roundId="r1"
+        slotKey="r1:openai:0"
+        result={loading}
+        {...defaultSelectionProps}
+      />,
+    );
+    expect(screen.getByRole("status")).toBeDefined();
+
+    rerender(
+      <ImageCard
+        roundId="r1"
+        slotKey="r1:openai:0"
+        result={error}
+        {...defaultSelectionProps}
+      />,
+    );
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.getByRole("alert")).toBeDefined();
+  });
+});
+
+describe("SelectionOverlay", () => {
+  it("renders checkbox role with unchecked state", () => {
+    render(
+      <SelectionOverlay
+        selected={false}
+        selectionIndex={null}
+        disabled={false}
+        atMax={false}
+        onToggle={vi.fn()}
+      >
+        <span>child</span>
+      </SelectionOverlay>,
+    );
+    const checkbox = screen.getByRole("checkbox");
+    expect(checkbox.getAttribute("aria-checked")).toBe("false");
+  });
+
+  it("shows selection badge when selected", () => {
+    render(
+      <SelectionOverlay
+        selected={true}
+        selectionIndex={2}
+        disabled={false}
+        atMax={false}
+        onToggle={vi.fn()}
+      >
+        <span>child</span>
+      </SelectionOverlay>,
+    );
+    expect(screen.getByRole("checkbox", { checked: true })).toBeDefined();
+    expect(screen.getByText("3")).toBeDefined();
+  });
+
+  it("calls onToggle on click when not at max", () => {
+    const toggle = vi.fn();
+    render(
+      <SelectionOverlay
+        selected={false}
+        selectionIndex={null}
+        disabled={false}
+        atMax={false}
+        onToggle={toggle}
+      >
+        <span>child</span>
+      </SelectionOverlay>,
+    );
+    fireEvent.click(screen.getByRole("checkbox"));
+    expect(toggle).toHaveBeenCalledOnce();
+  });
+
+  it("does not call onToggle when at max and not selected (5th click)", () => {
+    const toggle = vi.fn();
+    render(
+      <SelectionOverlay
+        selected={false}
+        selectionIndex={null}
+        disabled={false}
+        atMax={true}
+        onToggle={toggle}
+      >
+        <span>child</span>
+      </SelectionOverlay>,
+    );
+    fireEvent.click(screen.getByRole("checkbox"));
+    expect(toggle).not.toHaveBeenCalled();
+  });
+
+  it("allows deselect when at max and already selected", () => {
+    const toggle = vi.fn();
+    render(
+      <SelectionOverlay
+        selected={true}
+        selectionIndex={3}
+        disabled={false}
+        atMax={true}
+        onToggle={toggle}
+      >
+        <span>child</span>
+      </SelectionOverlay>,
+    );
+    fireEvent.click(screen.getByRole("checkbox"));
+    expect(toggle).toHaveBeenCalledOnce();
+  });
+
+  it("ignores click when disabled", () => {
+    const toggle = vi.fn();
+    render(
+      <SelectionOverlay
+        selected={false}
+        selectionIndex={null}
+        disabled={true}
+        atMax={false}
+        onToggle={toggle}
+      >
+        <span>child</span>
+      </SelectionOverlay>,
+    );
+    fireEvent.click(screen.getByRole("checkbox"));
+    expect(toggle).not.toHaveBeenCalled();
+  });
+
+  it("handles keyboard Enter to toggle", () => {
+    const toggle = vi.fn();
+    render(
+      <SelectionOverlay
+        selected={false}
+        selectionIndex={null}
+        disabled={false}
+        atMax={false}
+        onToggle={toggle}
+      >
+        <span>child</span>
+      </SelectionOverlay>,
+    );
+    fireEvent.keyDown(screen.getByRole("checkbox"), { key: "Enter" });
+    expect(toggle).toHaveBeenCalledOnce();
+  });
+
+  it("handles keyboard Space to toggle", () => {
+    const toggle = vi.fn();
+    render(
+      <SelectionOverlay
+        selected={false}
+        selectionIndex={null}
+        disabled={false}
+        atMax={false}
+        onToggle={toggle}
+      >
+        <span>child</span>
+      </SelectionOverlay>,
+    );
+    fireEvent.keyDown(screen.getByRole("checkbox"), { key: " " });
+    expect(toggle).toHaveBeenCalledOnce();
   });
 });

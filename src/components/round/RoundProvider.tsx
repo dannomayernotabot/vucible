@@ -19,6 +19,13 @@ import {
   type SlotUpdate,
 } from "@/lib/round/orchestrate";
 
+export interface Selection {
+  readonly provider: Provider;
+  readonly index: number;
+}
+
+export const MAX_SELECTIONS = 4;
+
 interface RoundContextValue {
   readonly round: Round | null;
   readonly isRunning: boolean;
@@ -26,6 +33,8 @@ interface RoundContextValue {
   readonly total: number;
   readonly queued: number;
   readonly consecutive429Count: Record<Provider, number>;
+  readonly selections: readonly Selection[];
+  readonly toggleSelection: (provider: Provider, index: number) => void;
   readonly startRound: (input: StartRoundInput) => void;
   readonly abortRound: () => void;
 }
@@ -55,6 +64,7 @@ export function RoundProvider({
 }: RoundProviderProps) {
   const [round, setRound] = useState<Round | null>(null);
   const [queued, setQueued] = useState(0);
+  const [selections, setSelections] = useState<readonly Selection[]>([]);
   const [consecutive429, setConsecutive429] = useState<Record<Provider, number>>({
     openai: 0,
     gemini: 0,
@@ -112,11 +122,30 @@ export function RoundProvider({
     }
   }, []);
 
+  const toggleSelection = useCallback(
+    (provider: Provider, index: number) => {
+      setSelections((prev) => {
+        const existing = prev.findIndex(
+          (s) => s.provider === provider && s.index === index,
+        );
+        if (existing >= 0) {
+          return prev.filter((_, i) => i !== existing);
+        }
+        if (prev.length >= MAX_SELECTIONS) {
+          return prev;
+        }
+        return [...prev, { provider, index }];
+      });
+    },
+    [],
+  );
+
   const startRound = useCallback(
     (input: StartRoundInput) => {
       const controller = new AbortController();
       abortRef.current = controller;
 
+      setSelections([]);
       setConsecutive429({ openai: 0, gemini: 0 });
 
       startRoundOne(input).then(({ round: r, sessionId }) => {
@@ -157,10 +186,12 @@ export function RoundProvider({
       total,
       queued,
       consecutive429Count: consecutive429,
+      selections,
+      toggleSelection,
       startRound,
       abortRound,
     }),
-    [round, isRunning, done, total, queued, consecutive429, startRound, abortRound],
+    [round, isRunning, done, total, queued, consecutive429, selections, toggleSelection, startRound, abortRound],
   );
 
   return (

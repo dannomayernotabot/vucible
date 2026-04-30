@@ -46,6 +46,7 @@ function Consumer() {
       <span data-testid="c429-openai">{ctx.consecutive429Count.openai}</span>
       <span data-testid="c429-gemini">{ctx.consecutive429Count.gemini}</span>
       <span data-testid="round">{ctx.round ? "yes" : "no"}</span>
+      <span data-testid="selections">{ctx.selections.length}</span>
     </div>
   );
 }
@@ -275,5 +276,106 @@ describe("RoundProvider 429 tracking", () => {
 
     expect(screen.getByTestId("c429-openai").textContent).toBe("1");
     expect(screen.getByTestId("c429-gemini").textContent).toBe("0");
+  });
+});
+
+describe("RoundProvider selections", () => {
+  it("starts with empty selections", () => {
+    render(
+      <RoundProvider>
+        <Consumer />
+      </RoundProvider>,
+    );
+    expect(screen.getByTestId("selections").textContent).toBe("0");
+  });
+
+  it("toggleSelection adds and removes selections", () => {
+    let toggle: ((p: "openai" | "gemini", i: number) => void) | null = null;
+    function SelectionConsumer() {
+      const ctx = useRound();
+      toggle = ctx.toggleSelection;
+      return (
+        <div>
+          <span data-testid="selections">{ctx.selections.length}</span>
+          <span data-testid="sel-detail">
+            {ctx.selections.map((s) => `${s.provider}:${s.index}`).join(",")}
+          </span>
+        </div>
+      );
+    }
+
+    render(
+      <RoundProvider>
+        <SelectionConsumer />
+      </RoundProvider>,
+    );
+
+    act(() => { toggle!("openai", 0); });
+    expect(screen.getByTestId("selections").textContent).toBe("1");
+    expect(screen.getByTestId("sel-detail").textContent).toBe("openai:0");
+
+    act(() => { toggle!("gemini", 2); });
+    expect(screen.getByTestId("selections").textContent).toBe("2");
+
+    act(() => { toggle!("openai", 0); });
+    expect(screen.getByTestId("selections").textContent).toBe("1");
+    expect(screen.getByTestId("sel-detail").textContent).toBe("gemini:2");
+  });
+
+  it("enforces MAX_SELECTIONS cap of 4", () => {
+    let toggle: ((p: "openai" | "gemini", i: number) => void) | null = null;
+    function SelectionConsumer() {
+      const ctx = useRound();
+      toggle = ctx.toggleSelection;
+      return <span data-testid="selections">{ctx.selections.length}</span>;
+    }
+
+    render(
+      <RoundProvider>
+        <SelectionConsumer />
+      </RoundProvider>,
+    );
+
+    act(() => { toggle!("openai", 0); });
+    act(() => { toggle!("openai", 1); });
+    act(() => { toggle!("openai", 2); });
+    act(() => { toggle!("openai", 3); });
+    expect(screen.getByTestId("selections").textContent).toBe("4");
+
+    act(() => { toggle!("gemini", 0); });
+    expect(screen.getByTestId("selections").textContent).toBe("4");
+  });
+
+  it("clears selections when starting a new round", async () => {
+    const round = makeLoadingRound(2, 0);
+    mockStartRoundOne.mockResolvedValue({ round, sessionId: "s1" });
+    mockFanOut.mockResolvedValue({ ...round, settledAt: new Date().toISOString() });
+
+    let toggle: ((p: "openai" | "gemini", i: number) => void) | null = null;
+    let start: (() => void) | null = null;
+    function SelectionConsumer() {
+      const ctx = useRound();
+      toggle = ctx.toggleSelection;
+      start = () =>
+        ctx.startRound({
+          prompt: "test",
+          modelsEnabled: { openai: true, gemini: false },
+          count: 4,
+          aspect: { kind: "discrete", ratio: "1:1" },
+        });
+      return <span data-testid="selections">{ctx.selections.length}</span>;
+    }
+
+    render(
+      <RoundProvider>
+        <SelectionConsumer />
+      </RoundProvider>,
+    );
+
+    act(() => { toggle!("openai", 0); });
+    expect(screen.getByTestId("selections").textContent).toBe("1");
+
+    await act(async () => { start!(); });
+    expect(screen.getByTestId("selections").textContent).toBe("0");
   });
 });

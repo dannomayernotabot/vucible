@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import { useRound } from "@/components/round/RoundProvider";
+import { useRound, MAX_SELECTIONS } from "@/components/round/RoundProvider";
 import { getStorage } from "@/lib/storage/keys";
 import { ModelSection } from "./ModelSection";
 
@@ -18,8 +18,13 @@ function formatDuration(seconds: number): string {
   return s > 0 ? `${m}m ${s}s` : `${m}m`;
 }
 
+function countSuccesses(results: readonly { status: string }[]): number {
+  return results.filter((r) => r.status === "success").length;
+}
+
 export function ResultGrid() {
-  const { round, isRunning, done, total, queued } = useRound();
+  const { round, isRunning, done, total, queued, selections, toggleSelection } =
+    useRound();
 
   const longRoundBanner = useMemo(() => {
     if (!round || !isRunning) return null;
@@ -38,6 +43,10 @@ export function ResultGrid() {
   }, [round, isRunning]);
 
   if (!round) return null;
+
+  const settled = !isRunning;
+  const successCount = countSuccesses(round.openaiResults) + countSuccesses(round.geminiResults);
+  const allErrors = settled && successCount === 0 && total > 0;
 
   return (
     <div className="space-y-6 p-4">
@@ -59,12 +68,42 @@ export function ResultGrid() {
         roundId={round.id}
         provider="openai"
         results={round.openaiResults}
+        selections={selections}
+        onToggleSelection={toggleSelection}
       />
       <ModelSection
         roundId={round.id}
         provider="gemini"
         results={round.geminiResults}
+        selections={selections}
+        onToggleSelection={toggleSelection}
       />
+
+      {settled && successCount > 0 && (
+        <div className="flex items-center justify-between border-t pt-4">
+          <p className="text-sm text-muted-foreground" aria-live="polite">
+            Selected: {selections.length}/{MAX_SELECTIONS}
+          </p>
+          <button
+            type="button"
+            disabled={selections.length === 0}
+            className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
+            title={
+              selections.length === 0
+                ? "Pick 1-4 favorites to continue"
+                : undefined
+            }
+          >
+            Evolve
+          </button>
+        </div>
+      )}
+
+      {allErrors && (
+        <p className="text-sm text-muted-foreground" role="status">
+          All cards failed — regenerate or start a new prompt
+        </p>
+      )}
     </div>
   );
 }
