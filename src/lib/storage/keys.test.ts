@@ -97,6 +97,23 @@ describe("keys.ts", () => {
       });
     });
 
+    it("snaps freeform 5:2 to 21:9 when Gemini configured", () => {
+      const s = makeStorage({
+        providers: { openai: OPENAI_CONFIG, gemini: GEMINI_CONFIG },
+        defaults: {
+          imageCount: 8,
+          aspectRatio: { kind: "freeform", width: 500, height: 200 },
+          theme: "dark",
+        },
+      });
+      setStorage(s);
+      const loaded = getStorage();
+      expect(loaded!.defaults.aspectRatio).toEqual({
+        kind: "discrete",
+        ratio: "21:9",
+      });
+    });
+
     it("leaves discrete unchanged regardless of providers", () => {
       const s = makeStorage({
         providers: { gemini: GEMINI_CONFIG },

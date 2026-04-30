@@ -85,4 +85,36 @@ describe("snapAspectIfNeeded", () => {
     const result = snapAspectIfNeeded(aspect, { gemini: geminiConfig });
     expect(result).toEqual({ kind: "discrete", ratio: "9:16" });
   });
+
+  it("snaps extreme landscape 100:1 to 8:1", () => {
+    const aspect: AspectRatioConfig = { kind: "freeform", width: 10000, height: 100 };
+    const result = snapAspectIfNeeded(aspect, { gemini: geminiConfig });
+    expect(result).toEqual({ kind: "discrete", ratio: "8:1" });
+  });
+
+  it("snaps vertical 1:3 to nearest portrait ratio", () => {
+    const aspect: AspectRatioConfig = { kind: "freeform", width: 100, height: 300 };
+    const result = snapAspectIfNeeded(aspect, { gemini: geminiConfig });
+    expect(result).toEqual({ kind: "discrete", ratio: "1:4" });
+  });
+
+  it("snaps freeform 5:2 to 21:9 when Gemini present", () => {
+    const aspect: AspectRatioConfig = { kind: "freeform", width: 500, height: 200 };
+    const result = snapAspectIfNeeded(aspect, { gemini: geminiConfig });
+    expect(result).toEqual({ kind: "discrete", ratio: "21:9" });
+  });
+
+  const ALL_DISCRETE_RATIOS = [
+    "1:1", "1:4", "1:8", "2:3", "3:2", "3:4", "4:1", "4:3",
+    "4:5", "5:4", "8:1", "9:16", "16:9", "21:9",
+  ] as const;
+
+  it.each(ALL_DISCRETE_RATIOS)(
+    "discrete %s passes through unchanged (idempotent)",
+    (ratio) => {
+      const aspect: AspectRatioConfig = { kind: "discrete", ratio };
+      const result = snapAspectIfNeeded(aspect, { gemini: geminiConfig });
+      expect(result).toEqual({ kind: "discrete", ratio });
+    },
+  );
 });
