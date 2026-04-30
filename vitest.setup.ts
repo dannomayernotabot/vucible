@@ -2,6 +2,11 @@ import "fake-indexeddb/auto";
 import { setupServer } from "msw/node";
 import { afterAll, afterEach, beforeAll, vi } from "vitest";
 
+// DD-024 proxy pivot: source defaults to /api/openai/v1, but tests mock
+// api.openai.com directly via msw. Override the provider's base URL so the
+// existing handlers keep matching.
+process.env.OPENAI_BASE_URL = "https://api.openai.com/v1";
+
 // Node 25+ exposes a non-functional localStorage stub that shadows jsdom's.
 // Replace it with a spec-compliant in-memory implementation.
 if (typeof globalThis.localStorage === "undefined" || typeof globalThis.localStorage.getItem !== "function") {

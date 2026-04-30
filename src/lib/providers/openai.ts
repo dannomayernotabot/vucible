@@ -3,7 +3,9 @@ import type { Tier } from "./types";
 import type { ImageMeta } from "@/lib/storage/schema";
 import { ipmToTier } from "./tiers";
 
-const OPENAI_BASE = "https://api.openai.com/v1";
+// Browser calls our same-origin Edge proxy at /api/openai/v1/* (DD-024 pivot).
+// Server-side / Node test contexts can override via OPENAI_BASE_URL env var.
+const OPENAI_BASE = process.env.OPENAI_BASE_URL ?? "/api/openai/v1";
 const OPENAI_IMAGE_MODEL = "gpt-image-1";
 const TEST_PROMPT = "a single solid color square";
 
