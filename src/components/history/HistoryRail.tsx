@@ -6,7 +6,6 @@ import { listRoundsBySession } from "@/lib/storage/history";
 import type { Round } from "@/lib/storage/schema";
 import { RoundCard } from "./RoundCard";
 import { SessionsList } from "./SessionsList";
-import { ScrollBackPanel } from "./ScrollBackPanel";
 
 interface HistoryRailProps {
   readonly open: boolean;
