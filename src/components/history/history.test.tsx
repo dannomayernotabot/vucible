@@ -6,6 +6,7 @@ import { cleanup, render, screen, fireEvent, act } from "@testing-library/react"
 import { HistoryRail } from "./HistoryRail";
 import { RoundCard } from "./RoundCard";
 import type { Round, RoundResult } from "@/lib/storage/schema";
+import { thumbnailCache } from "@/lib/round/image-cache";
 
 vi.mock("@/lib/round/image-cache", () => ({
   imageCache: { get: vi.fn(() => ""), release: vi.fn() },
@@ -158,6 +159,38 @@ describe("RoundCard", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Round 1" }));
     expect(onClick).toHaveBeenCalledOnce();
+  });
+
+  it("releases thumbnailCache entries on unmount", () => {
+    vi.mocked(thumbnailCache.release).mockClear();
+
+    const round = makeRound();
+    const { unmount } = render(
+      <RoundCard round={round} isActive={false} onClick={() => {}} />,
+    );
+
+    unmount();
+
+    expect(thumbnailCache.release).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not release non-success slots on unmount", () => {
+    vi.mocked(thumbnailCache.release).mockClear();
+
+    const allErrors: RoundResult = {
+      status: "error",
+      error: { kind: "server_error", message: "fail" },
+    };
+    const round = makeRound({
+      openaiResults: [allErrors, allErrors, allErrors, allErrors],
+    });
+    const { unmount } = render(
+      <RoundCard round={round} isActive={false} onClick={() => {}} />,
+    );
+
+    unmount();
+
+    expect(thumbnailCache.release).not.toHaveBeenCalled();
   });
 
   it("shows up to 8 thumbnails max", () => {
