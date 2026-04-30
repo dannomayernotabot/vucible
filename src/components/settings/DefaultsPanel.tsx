@@ -27,24 +27,30 @@ export function DefaultsPanel() {
     }));
 
   function saveImageCount(count: ImageCount) {
-    setImageCount(count);
     const current = getStorage();
-    if (current) {
+    if (!current) return;
+    try {
       setStorage({
         ...current,
         defaults: { ...current.defaults, imageCount: count },
       });
+      setImageCount(count);
+    } catch {
+      // QuotaExceeded — keep prior value
     }
   }
 
   function saveAspectRatio(ar: AspectRatioConfig) {
-    setAspectRatio(ar);
     const current = getStorage();
-    if (current) {
+    if (!current) return;
+    try {
       setStorage({
         ...current,
         defaults: { ...current.defaults, aspectRatio: ar },
       });
+      setAspectRatio(ar);
+    } catch {
+      // QuotaExceeded — keep prior value
     }
   }
 

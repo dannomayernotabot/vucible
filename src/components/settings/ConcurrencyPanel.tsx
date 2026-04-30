@@ -51,18 +51,22 @@ function ConcurrencyRow({
 
   function handleBlur() {
     const clamped = Math.max(1, Math.min(value, ipm));
-    setValue(clamped);
     const current = getStorage();
     if (!current) return;
     const providerConfig = current.providers[provider];
     if (!providerConfig) return;
-    setStorage({
-      ...current,
-      providers: {
-        ...current.providers,
-        [provider]: { ...providerConfig, concurrencyCap: clamped },
-      },
-    });
+    try {
+      setStorage({
+        ...current,
+        providers: {
+          ...current.providers,
+          [provider]: { ...providerConfig, concurrencyCap: clamped },
+        },
+      });
+      setValue(clamped);
+    } catch {
+      setValue(cap);
+    }
   }
 
   return (
