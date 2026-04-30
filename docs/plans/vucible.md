@@ -1404,9 +1404,13 @@ Verified 2026-04-29 via `src/__tests__/cors-smoke.test.ts` (7 assertions, all pa
 
 **Caveat impact on wizard validation (DD-022):** The wizard's `testGenerate` call uses `/v1/images/generations`. If the user enters a bad key, the 401 response is CORS-opaque in a browser — JS sees a generic `TypeError: Failed to fetch`, not a clean JSON error. **Workaround:** validate the key first via `GET /v1/models` (CORS-clean on 401, reads the error body), then only call `testGenerate` once the key is confirmed valid. This adds one extra free call to the wizard validation path but eliminates the opaque-error UX problem. Provider client should implement: `validateKey()` (via `/v1/models`) → if ok → `testGenerate()` (via `/v1/images/generations`) for tier detection.
 
-### U. Stale `validatedAt` re-validation policy
+### U. Stale `validatedAt` re-validation policy — RESOLVED: NO
 
-Current plan: keys validated once and trusted until the user manually re-tests in Settings. A revoked key returning a 401 mid-round is handled by DD-019's auth_failed path. Open: should we re-validate on app launch if `validatedAt` is older than X days? Lean: **no auto-revalidation** in v1 — re-validation costs $0.04 (OpenAI test-gen) per launch, accumulating silently. The 401 path on first round-1 call is a sufficient signal; user re-pastes via Settings. Confirm before Phase 4.
+**Decision: No auto-revalidation in v1.** Decided 2026-04-29.
+
+Keys validated once via wizard and trusted until the user manually re-tests in Settings. A revoked key returning 401 mid-round is handled by DD-019's auth_failed path — user sees "Invalid API key. Re-check in Settings." and can re-paste + re-test.
+
+Why not auto-revalidate: costs $0.04 (OpenAI testGenerate) per app launch, accumulating silently. The 401 path on first round-1 call is a sufficient signal without the cost overhead.
 
 ### V. Persistence semantics of `bytes: ArrayBuffer` via `idb`
 
