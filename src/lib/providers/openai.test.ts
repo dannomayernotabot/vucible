@@ -278,3 +278,90 @@ describe("generate", () => {
     }
   });
 });
+
+describe("generate with reference images", () => {
+  it("sends multipart content-type when references provided", async () => {
+    let capturedContentType: string | null = null;
+    server.use(
+      http.post(`${OPENAI_BASE}/images/generations`, ({ request }) => {
+        capturedContentType = request.headers.get("content-type");
+        return HttpResponse.json({ data: [{ b64_json: FAKE_B64_IMAGE }] });
+      }),
+    );
+    await generate(API_KEY, {
+      prompt: "evolve this",
+      size: { width: 1024, height: 1024 },
+      referenceImages: [{ bytes: PNG_1x1, mimeType: "image/png" }],
+    });
+    expect(capturedContentType).toContain("multipart/form-data");
+  });
+
+  it("does not set explicit Content-Type (lets browser set boundary)", async () => {
+    let capturedContentType: string | null = null;
+    server.use(
+      http.post(`${OPENAI_BASE}/images/generations`, ({ request }) => {
+        capturedContentType = request.headers.get("content-type");
+        return HttpResponse.json({ data: [{ b64_json: FAKE_B64_IMAGE }] });
+      }),
+    );
+    await generate(API_KEY, {
+      prompt: "test",
+      size: { width: 512, height: 512 },
+      referenceImages: [{ bytes: PNG_1x1, mimeType: "image/png" }],
+    });
+    expect(capturedContentType).toContain("boundary=");
+  });
+
+  it("returns ArrayBuffer from 200 response with references", async () => {
+    server.use(
+      http.post(`${OPENAI_BASE}/images/generations`, () => {
+        return HttpResponse.json({ data: [{ b64_json: FAKE_B64_IMAGE }] });
+      }),
+    );
+    const result = await generate(API_KEY, {
+      prompt: "test",
+      size: { width: 512, height: 512 },
+      referenceImages: [{ bytes: PNG_1x1, mimeType: "image/png" }],
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.image).toBeInstanceOf(ArrayBuffer);
+      expect(result.image.byteLength).toBeGreaterThan(0);
+    }
+  });
+
+  it("sends JSON body without references", async () => {
+    let capturedContentType: string | null = null;
+    server.use(
+      http.post(`${OPENAI_BASE}/images/generations`, ({ request }) => {
+        capturedContentType = request.headers.get("content-type");
+        return HttpResponse.json({ data: [{ b64_json: FAKE_B64_IMAGE }] });
+      }),
+    );
+    await generate(API_KEY, {
+      prompt: "test",
+      size: { width: 512, height: 512 },
+    });
+    expect(capturedContentType).toBe("application/json");
+  });
+
+  it("returns error on auth failure with references", async () => {
+    server.use(
+      http.post(`${OPENAI_BASE}/images/generations`, () => {
+        return HttpResponse.json(
+          { error: { message: "Bad key" } },
+          { status: 401 },
+        );
+      }),
+    );
+    const result = await generate(API_KEY, {
+      prompt: "test",
+      size: { width: 512, height: 512 },
+      referenceImages: [{ bytes: PNG_1x1, mimeType: "image/png" }],
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.kind).toBe("auth_failed");
+    }
+  });
+});
