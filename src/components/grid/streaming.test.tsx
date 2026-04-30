@@ -16,6 +16,19 @@ vi.mock("@/lib/round/image-cache", () => ({
   },
 }));
 
+vi.mock("@/components/round/RoundProvider", async () => {
+  const actual = await vi.importActual<typeof import("@/components/round/RoundProvider")>(
+    "@/components/round/RoundProvider",
+  );
+  return {
+    ...actual,
+    useRound: () => ({
+      round: { id: "r1", number: 1, sessionId: "test-session-id" },
+      sessionId: "test-session-id",
+    }),
+  };
+});
+
 afterEach(() => {
   cleanup();
   mockGet.mockClear();
