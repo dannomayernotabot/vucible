@@ -19,6 +19,7 @@ interface ModelSectionProps {
   readonly results: readonly RoundResult[];
   readonly selections: readonly Selection[];
   readonly onToggleSelection: (provider: Provider, index: number) => void;
+  readonly onRegenerate: (provider: Provider, index: number) => void;
 }
 
 export function ModelSection({
@@ -27,6 +28,7 @@ export function ModelSection({
   results,
   selections,
   onToggleSelection,
+  onRegenerate,
 }: ModelSectionProps) {
   if (results.length === 0) return null;
 
@@ -53,6 +55,7 @@ export function ModelSection({
               selectionIndex={selIdx >= 0 ? selIdx : null}
               atMax={atMax}
               onToggleSelection={() => onToggleSelection(provider, index)}
+              onRegenerate={() => onRegenerate(provider, index)}
             />
           );
         })}

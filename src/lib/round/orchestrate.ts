@@ -390,6 +390,108 @@ export async function startRoundN(
   return { round, priorRoundUpdated, openaiRefs, geminiRefs };
 }
 
+export interface RegenerateSlotOptions {
+  round: Round;
+  provider: Provider;
+  index: number;
+  signal: AbortSignal;
+  throttle?: ProviderThrottle;
+  onSlotUpdate: (update: SlotUpdate) => void;
+}
+
+export async function regenerateSlot(opts: RegenerateSlotOptions): Promise<Round> {
+  const { round, provider, index, signal, throttle, onSlotUpdate } = opts;
+  const storage = getStorage();
+  if (!storage) throw new Error("No storage available.");
+
+  const key = storage.providers[provider]?.apiKey;
+  if (!key) throw new Error(`No API key for ${provider}.`);
+
+  onSlotUpdate({ provider, index, result: { status: "loading" } });
+
+  const openaiSize = aspectToOpenAISize(round.aspect);
+  const geminiRatio = aspectToGeminiRatio(round.aspect);
+
+  const doGenerate = async () => {
+    if (provider === "openai") {
+      return await withRetry(
+        async (sig) => {
+          const r = await openaiGenerate(key, {
+            prompt: round.promptSent,
+            size: openaiSize,
+            signal: sig,
+          });
+          if (!r.ok) throw r.error;
+          return r;
+        },
+        { signal },
+      );
+    }
+    return await withRetry(
+      async (sig) => {
+        const r = await geminiGenerate(key, {
+          prompt: round.promptSent,
+          aspectRatio: geminiRatio,
+          signal: sig,
+        });
+        if (!r.ok) throw r.error;
+        return r;
+      },
+      { signal },
+    );
+  };
+
+  const resultsKey = provider === "openai" ? "openaiResults" : "geminiResults";
+  const results = [...round[resultsKey]] as RoundResult[];
+
+  try {
+    const enqueue = throttle
+      ? () => throttle.enqueue(doGenerate)
+      : doGenerate;
+    const result = await enqueue();
+
+    let thumb = result.image;
+    try {
+      const t = await generateThumbnail(result.image, result.mimeType);
+      thumb = t.thumbnail;
+    } catch {
+      // Non-fatal
+    }
+
+    const slot: RoundResult = {
+      status: "success",
+      bytes: result.image,
+      thumbnail: thumb,
+      mimeType: result.mimeType,
+      meta: result.meta,
+    };
+    results[index] = slot;
+    onSlotUpdate({ provider, index, result: slot });
+  } catch (err) {
+    const error: NormalizedError =
+      typeof err === "object" && err !== null && "kind" in err
+        ? (err as NormalizedError)
+        : { kind: "unknown", message: String(err) };
+    const slot: RoundResult = { status: "error", error };
+    results[index] = slot;
+    onSlotUpdate({ provider, index, result: slot });
+  }
+
+  const updated: Round = { ...round, [resultsKey]: results };
+
+  try {
+    await finalizeRound(updated);
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "QuotaExceededError") {
+      console.warn("[orchestrate] Browser storage full — slot saved in memory only");
+    } else {
+      throw err;
+    }
+  }
+
+  return updated;
+}
+
 function getSelectedResult(
   round: Round,
   selection: { readonly provider: Provider; readonly index: number },

@@ -155,6 +155,7 @@ describe("ModelSection", () => {
   const sectionDefaults = {
     selections: [],
     onToggleSelection: vi.fn(),
+    onRegenerate: vi.fn(),
   } as const;
 
   it("renders section header with provider name and count", () => {

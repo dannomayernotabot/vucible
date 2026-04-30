@@ -17,6 +17,7 @@ import {
   fanOut,
   startRoundOne,
   startRoundN,
+  regenerateSlot as doRegenerateSlot,
   type StartRoundInput,
   type SlotUpdate,
 } from "@/lib/round/orchestrate";
@@ -46,6 +47,7 @@ interface RoundContextValue {
     count: ImageCount;
     aspect: AspectRatioConfig;
   }) => void;
+  readonly regenerateSlot: (provider: Provider, index: number) => void;
   readonly abortRound: () => void;
 }
 
@@ -224,6 +226,25 @@ export function RoundProvider({
     [round, sessionId, selections, commentary, handleSlotUpdate],
   );
 
+  const regenerateSlot = useCallback(
+    (provider: Provider, index: number) => {
+      if (!round) return;
+      const controller = new AbortController();
+
+      doRegenerateSlot({
+        round,
+        provider,
+        index,
+        signal: controller.signal,
+        throttle: throttlesRef.current[provider],
+        onSlotUpdate: handleSlotUpdate,
+      }).then((updated) => {
+        setRound(updated);
+      });
+    },
+    [round, handleSlotUpdate],
+  );
+
   const abortRound = useCallback(() => {
     abortRef.current?.abort();
     abortRef.current = null;
@@ -252,9 +273,10 @@ export function RoundProvider({
       setCommentary,
       startRound,
       evolveRound,
+      regenerateSlot,
       abortRound,
     }),
-    [round, isRunning, done, total, queued, consecutive429, selections, commentary, sessionId, toggleSelection, setCommentary, startRound, evolveRound, abortRound],
+    [round, isRunning, done, total, queued, consecutive429, selections, commentary, sessionId, toggleSelection, setCommentary, startRound, evolveRound, regenerateSlot, abortRound],
   );
 
   return (

@@ -25,7 +25,7 @@ function countSuccesses(results: readonly { status: string }[]): number {
 }
 
 export function ResultGrid() {
-  const { round, isRunning, done, total, queued, selections, toggleSelection } =
+  const { round, isRunning, done, total, queued, selections, toggleSelection, regenerateSlot } =
     useRound();
 
   const longRoundBanner = useMemo(() => {
@@ -74,6 +74,7 @@ export function ResultGrid() {
         results={round.openaiResults}
         selections={selections}
         onToggleSelection={toggleSelection}
+        onRegenerate={regenerateSlot}
       />
       <ModelSection
         roundId={round.id}
@@ -81,6 +82,7 @@ export function ResultGrid() {
         results={round.geminiResults}
         selections={selections}
         onToggleSelection={toggleSelection}
+        onRegenerate={regenerateSlot}
       />
 
       {settled && successCount > 0 && <CommentaryInput />}
