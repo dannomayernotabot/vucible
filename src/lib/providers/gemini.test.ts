@@ -313,3 +313,92 @@ describe("generate", () => {
     }
   });
 });
+
+describe("generate with reference images", () => {
+  const REF_PNG: ReferenceImage = { base64: TINY_PNG_B64, mimeType: "image/png" };
+  const REF_JPEG: ReferenceImage = { base64: "AAAA", mimeType: "image/jpeg" };
+  const REF_WEBP: ReferenceImage = { base64: "BBBB", mimeType: "image/webp" };
+
+  it("includes 1 inline_data part for 1 reference image", async () => {
+    let capturedBody: unknown;
+    server.use(
+      http.post(`${GEMINI_BASE}/models/*`, async ({ request }) => {
+        capturedBody = await request.json();
+        return HttpResponse.json(geminiSuccessBody());
+      }),
+    );
+    await generate("test-key", {
+      prompt: "evolve this",
+      aspectRatio: "1:1",
+      referenceImages: [REF_PNG],
+    });
+    const body = capturedBody as Record<string, unknown>;
+    const contents = body.contents as { parts: unknown[] }[];
+    const parts = contents[0].parts;
+    expect(parts).toHaveLength(2);
+    expect(parts[0]).toEqual({ text: "evolve this" });
+    const inlinePart = parts[1] as Record<string, unknown>;
+    const inlineData = inlinePart.inline_data as Record<string, unknown>;
+    expect(inlineData.mime_type).toBe("image/png");
+    expect(inlineData.data).toBe(TINY_PNG_B64);
+  });
+
+  it("includes 4 inline_data parts for 4 reference images", async () => {
+    let capturedBody: unknown;
+    server.use(
+      http.post(`${GEMINI_BASE}/models/*`, async ({ request }) => {
+        capturedBody = await request.json();
+        return HttpResponse.json(geminiSuccessBody());
+      }),
+    );
+    await generate("test-key", {
+      prompt: "evolve all",
+      aspectRatio: "16:9",
+      referenceImages: [REF_PNG, REF_JPEG, REF_WEBP, REF_PNG],
+    });
+    const body = capturedBody as Record<string, unknown>;
+    const contents = body.contents as { parts: unknown[] }[];
+    const parts = contents[0].parts;
+    expect(parts).toHaveLength(5);
+  });
+
+  it("preserves mimeType on each part", async () => {
+    let capturedBody: unknown;
+    server.use(
+      http.post(`${GEMINI_BASE}/models/*`, async ({ request }) => {
+        capturedBody = await request.json();
+        return HttpResponse.json(geminiSuccessBody());
+      }),
+    );
+    await generate("test-key", {
+      prompt: "test",
+      aspectRatio: "1:1",
+      referenceImages: [REF_PNG, REF_JPEG, REF_WEBP],
+    });
+    const body = capturedBody as Record<string, unknown>;
+    const contents = body.contents as { parts: Record<string, unknown>[] }[];
+    const parts = contents[0].parts;
+    const mimeTypes = parts.slice(1).map(
+      (p) => (p.inline_data as Record<string, unknown>).mime_type,
+    );
+    expect(mimeTypes).toEqual(["image/png", "image/jpeg", "image/webp"]);
+  });
+
+  it("returns image ArrayBuffer with reference images", async () => {
+    server.use(
+      http.post(`${GEMINI_BASE}/models/*`, () =>
+        HttpResponse.json(geminiSuccessBody("image/jpeg", TINY_PNG_B64)),
+      ),
+    );
+    const result = await generate("test-key", {
+      prompt: "evolve",
+      aspectRatio: "1:1",
+      referenceImages: [REF_PNG],
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.image.byteLength).toBeGreaterThan(0);
+      expect(result.mimeType).toBe("image/jpeg");
+    }
+  });
+});
