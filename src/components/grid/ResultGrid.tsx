@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import { useRound, MAX_SELECTIONS } from "@/components/round/RoundProvider";
 import { getStorage } from "@/lib/storage/keys";
 import { ModelSection } from "./ModelSection";
+import { CommentaryInput } from "@/components/round/CommentaryInput";
 
 const P50_GEN_LATENCY_S = 18;
 
@@ -78,6 +79,8 @@ export function ResultGrid() {
         selections={selections}
         onToggleSelection={toggleSelection}
       />
+
+      {settled && successCount > 0 && <CommentaryInput />}
 
       {settled && successCount > 0 && (
         <div className="flex items-center justify-between border-t pt-4">
