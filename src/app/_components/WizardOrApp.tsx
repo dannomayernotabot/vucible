@@ -12,8 +12,11 @@ const WizardShell = dynamic(
   { ssr: false },
 );
 
-const MainAppPlaceholder = dynamic(
-  () => import("@/components/MainAppPlaceholder"),
+const AppShell = dynamic(
+  () =>
+    import("@/components/shell/AppShell").then((m) => ({
+      default: m.AppShell,
+    })),
   { ssr: false },
 );
 
@@ -39,5 +42,5 @@ export default function WizardOrApp() {
     return <WizardShell onComplete={() => setGate("app")} />;
   }
 
-  return <MainAppPlaceholder />;
+  return <AppShell />;
 }
