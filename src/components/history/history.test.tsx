@@ -9,8 +9,13 @@ import { SessionsList } from "./SessionsList";
 import type { Round, RoundResult, Session } from "@/lib/storage/schema";
 import { thumbnailCache } from "@/lib/round/image-cache";
 
+const { mockImageCacheGet, mockImageCacheRelease } = vi.hoisted(() => ({
+  mockImageCacheGet: vi.fn(() => ""),
+  mockImageCacheRelease: vi.fn(),
+}));
+
 vi.mock("@/lib/round/image-cache", () => ({
-  imageCache: { get: vi.fn(() => ""), release: vi.fn() },
+  imageCache: { get: mockImageCacheGet, release: mockImageCacheRelease },
   thumbnailCache: {
     get: vi.fn(() => "blob:thumb-url"),
     release: vi.fn(),
@@ -128,6 +133,48 @@ describe("HistoryRail", () => {
     fireEvent.click(screen.getByLabelText("Close history"));
     expect(onClose).toHaveBeenCalledOnce();
   });
+
+  it("renders 5 rounds in chronological order", async () => {
+    mockRound = makeRound();
+    const rounds = Array.from({ length: 5 }, (_, i) =>
+      makeRound({ id: `r${i + 1}`, number: i + 1 }),
+    );
+    mockListRoundsBySession.mockResolvedValue(rounds);
+
+    await act(async () => {
+      render(<HistoryRail open={true} onClose={() => {}} />);
+    });
+
+    const roundLabels = screen
+      .getAllByRole("button")
+      .filter((b) => /Round \d/.test(b.getAttribute("aria-label") ?? ""))
+      .map((b) => b.getAttribute("aria-label"));
+
+    expect(roundLabels).toEqual([
+      "Round 1",
+      "Round 2",
+      "Round 3",
+      "Round 4",
+      "Round 5",
+    ]);
+  });
+
+  it("re-fetches rounds when activeRound.settledAt changes (new round completes)", async () => {
+    mockRound = makeRound();
+    mockListRoundsBySession.mockResolvedValue([makeRound()]);
+
+    const { rerender } = render(<HistoryRail open={true} onClose={() => {}} />);
+    await act(async () => {});
+
+    expect(mockListRoundsBySession).toHaveBeenCalledTimes(1);
+
+    mockRound = makeRound({ settledAt: "2026-04-30T00:05:00Z" });
+    await act(async () => {
+      rerender(<HistoryRail open={true} onClose={() => {}} />);
+    });
+
+    expect(mockListRoundsBySession).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe("RoundCard", () => {
@@ -215,6 +262,18 @@ describe("RoundCard", () => {
     );
     const gridItems = container.querySelectorAll(".aspect-square");
     expect(gridItems.length).toBe(8);
+  });
+
+  it("uses thumbnailCache only — never imageCache for full bytes", () => {
+    mockImageCacheGet.mockClear();
+    vi.mocked(thumbnailCache.get).mockClear();
+
+    render(
+      <RoundCard round={makeRound()} isActive={false} onClick={() => {}} />,
+    );
+
+    expect(thumbnailCache.get).toHaveBeenCalled();
+    expect(mockImageCacheGet).not.toHaveBeenCalled();
   });
 });
 
