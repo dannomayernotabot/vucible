@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach } from "vitest";
-import { getStorage, setStorage, clearStorage, getEnabledProviderEntries } from "./keys";
+import { getStorage, setStorage, clearStorage, getEnabledProviderEntries, getOpenaiModel, setOpenaiModel } from "./keys";
 import { STORAGE_KEY } from "./schema";
 import type { VucibleStorageV1, ProviderConfig } from "@/lib/providers/types";
 
@@ -186,6 +186,38 @@ describe("keys.ts", () => {
     it("returns empty array when no providers configured", () => {
       const s = makeStorage({ providers: {} });
       expect(getEnabledProviderEntries(s)).toEqual([]);
+    });
+  });
+
+  describe("getOpenaiModel / setOpenaiModel", () => {
+    it("returns default gpt-image-1 when no storage", () => {
+      expect(getOpenaiModel()).toBe("gpt-image-1");
+    });
+
+    it("returns default gpt-image-1 when openaiModel not set", () => {
+      setStorage(makeStorage());
+      expect(getOpenaiModel()).toBe("gpt-image-1");
+    });
+
+    it("round-trips a custom model name", () => {
+      setStorage(makeStorage());
+      setOpenaiModel("dall-e-3");
+      expect(getOpenaiModel()).toBe("dall-e-3");
+    });
+
+    it("preserves other storage fields on setOpenaiModel", () => {
+      const s = makeStorage();
+      setStorage(s);
+      setOpenaiModel("dall-e-3");
+      const loaded = getStorage();
+      expect(loaded!.providers).toEqual(s.providers);
+      expect(loaded!.defaults).toEqual(s.defaults);
+      expect(loaded!.openaiModel).toBe("dall-e-3");
+    });
+
+    it("no-ops when storage is empty", () => {
+      setOpenaiModel("dall-e-3");
+      expect(getStorage()).toBeNull();
     });
   });
 });

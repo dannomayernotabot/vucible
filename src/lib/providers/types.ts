@@ -42,5 +42,6 @@ export interface VucibleStorageV1 {
   readonly schemaVersion: 1;
   readonly providers: Partial<Record<Provider, ProviderConfig>>;
   readonly defaults: UserDefaults;
+  readonly openaiModel?: string;
   readonly createdAt: string;
 }

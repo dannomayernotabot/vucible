@@ -25,6 +25,7 @@ const ALL_KINDS: ErrorKind[] = [
   "server_error",
   "network_error",
   "quota_exhausted",
+  "verification_required",
   "unknown",
 ];
 
@@ -74,6 +75,13 @@ describe("errorToMessage", () => {
   it("network_error distinguishes abort", () => {
     const err = makeError("network_error", { message: "abort signal" });
     expect(errorToMessage(err, "round")).toContain("aborted");
+  });
+
+  it("verification_required mentions organization verification", () => {
+    const err = makeError("verification_required");
+    expect(errorToMessage(err, "wizard")).toContain("organization verification");
+    expect(errorToMessage(err, "round")).toContain("organization verification");
+    expect(errorToMessage(err, "settings")).toContain("organization verification");
   });
 });
 

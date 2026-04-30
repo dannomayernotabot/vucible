@@ -74,6 +74,11 @@ const MESSAGE_MAP: Record<ErrorKind, Record<ErrorContext, string | ((err: Normal
     round: "Quota exhausted. Add billing or wait for reset.",
     settings: "Quota exhausted. Add billing or wait for reset.",
   },
+  verification_required: {
+    wizard: "This OpenAI model requires organization verification. Complete verification in your OpenAI dashboard.",
+    round: "This OpenAI model requires organization verification. Complete verification in your OpenAI dashboard.",
+    settings: "This OpenAI model requires organization verification. Complete verification in your OpenAI dashboard.",
+  },
   unknown: {
     wizard: "Unexpected error. Try again.",
     round: "Unexpected error. Try again.",

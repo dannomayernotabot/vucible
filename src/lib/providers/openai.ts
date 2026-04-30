@@ -177,8 +177,20 @@ async function mapResponseError(response: Response): Promise<NormalizedError> {
 
   switch (response.status) {
     case 401:
+      return { kind: "auth_failed", message, httpStatus: 401, raw: body };
     case 403:
-      return { kind: "auth_failed", message, httpStatus: response.status, raw: body };
+      if (/must be verified to use the model/i.test(message)) {
+        const modelMatch = message.match(/model\s+`([^`]+)`/);
+        return {
+          kind: "verification_required",
+          message,
+          httpStatus: 403,
+          model: modelMatch?.[1],
+          deepLink: "https://platform.openai.com/settings/organization/general",
+          raw: body,
+        };
+      }
+      return { kind: "auth_failed", message, httpStatus: 403, raw: body };
     case 429:
       return {
         kind: "rate_limited",

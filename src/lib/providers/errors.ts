@@ -6,6 +6,7 @@ export type ErrorKind =
   | "server_error"
   | "network_error"
   | "quota_exhausted"
+  | "verification_required"
   | "unknown";
 
 export interface NormalizedError {
@@ -13,5 +14,7 @@ export interface NormalizedError {
   readonly message: string;
   readonly httpStatus?: number;
   readonly retryAfterSeconds?: number;
+  readonly model?: string;
+  readonly deepLink?: string;
   readonly raw?: unknown;
 }

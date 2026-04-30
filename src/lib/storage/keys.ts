@@ -50,6 +50,19 @@ export function clearStorage(): void {
   window.localStorage.removeItem(STORAGE_KEY);
 }
 
+const DEFAULT_OPENAI_MODEL = "gpt-image-1";
+
+export function getOpenaiModel(): string {
+  const storage = getStorage();
+  return storage?.openaiModel ?? DEFAULT_OPENAI_MODEL;
+}
+
+export function setOpenaiModel(model: string): void {
+  const current = getStorage();
+  if (!current) return;
+  setStorage({ ...current, openaiModel: model });
+}
+
 export function getEnabledProviderEntries(
   storage: VucibleStorageV1,
 ): Array<[Provider, ProviderConfig]> {

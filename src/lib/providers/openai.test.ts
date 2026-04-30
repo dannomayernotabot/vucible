@@ -170,6 +170,50 @@ describe("testGenerate", () => {
     }
   });
 
+  it("returns verification_required on 403 with verification message", async () => {
+    server.use(
+      http.post(`${OPENAI_BASE}/images/generations`, () => {
+        return HttpResponse.json(
+          {
+            error: {
+              message:
+                "You must be verified to use the model `gpt-image-1`. Please visit https://platform.openai.com/settings/organization/general to complete verification.",
+              type: "invalid_request_error",
+            },
+          },
+          { status: 403 },
+        );
+      }),
+    );
+    const result = await testGenerate(API_KEY);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.kind).toBe("verification_required");
+      expect(result.error.model).toBe("gpt-image-1");
+      expect(result.error.deepLink).toBe(
+        "https://platform.openai.com/settings/organization/general",
+      );
+      expect(result.error.httpStatus).toBe(403);
+    }
+  });
+
+  it("returns auth_failed on 403 without verification message", async () => {
+    server.use(
+      http.post(`${OPENAI_BASE}/images/generations`, () => {
+        return HttpResponse.json(
+          { error: { message: "Access denied", type: "invalid_request_error" } },
+          { status: 403 },
+        );
+      }),
+    );
+    const result = await testGenerate(API_KEY);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.kind).toBe("auth_failed");
+      expect(result.error.httpStatus).toBe(403);
+    }
+  });
+
   it("returns network_error on fetch failure", async () => {
     server.use(
       http.post(`${OPENAI_BASE}/images/generations`, () => {
