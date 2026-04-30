@@ -5,6 +5,7 @@ import { useRound, MAX_SELECTIONS } from "@/components/round/RoundProvider";
 import { getStorage } from "@/lib/storage/keys";
 import { ModelSection } from "./ModelSection";
 import { CommentaryInput } from "@/components/round/CommentaryInput";
+import { RateLimitBanner } from "@/components/feedback/RateLimitBanner";
 
 const P50_GEN_LATENCY_S = 18;
 
@@ -64,6 +65,8 @@ export function ResultGrid() {
           )}
         </div>
       )}
+
+      <RateLimitBanner />
 
       <ModelSection
         roundId={round.id}
