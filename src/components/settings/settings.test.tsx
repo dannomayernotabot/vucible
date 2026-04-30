@@ -56,10 +56,11 @@ describe("DefaultsPanel auto-save", () => {
 });
 
 describe("ConcurrencyPanel auto-save", () => {
-  it("clamps value to IPM on blur", async () => {
+  it("clamps value to IPM on blur and writes when different from stored", async () => {
     render(<ConcurrencyPanel />);
 
     const input = screen.getByLabelText("OpenAI concurrency cap");
+    // stored cap is 5, clamped to ipm (20) — different from stored, so write fires
     fireEvent.change(input, { target: { value: "999" } });
     fireEvent.blur(input);
 
