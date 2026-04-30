@@ -12,9 +12,11 @@ import {
 import type { Round, RoundResult } from "@/lib/storage/schema";
 import type { Provider } from "@/lib/providers/types";
 import { ProviderThrottle } from "@/lib/round/throttle";
+import type { ImageCount, AspectRatioConfig } from "@/lib/providers/types";
 import {
   fanOut,
   startRoundOne,
+  startRoundN,
   type StartRoundInput,
   type SlotUpdate,
 } from "@/lib/round/orchestrate";
@@ -35,9 +37,15 @@ interface RoundContextValue {
   readonly consecutive429Count: Record<Provider, number>;
   readonly selections: readonly Selection[];
   readonly commentary: string;
+  readonly sessionId: string | null;
   readonly toggleSelection: (provider: Provider, index: number) => void;
   readonly setCommentary: (value: string) => void;
   readonly startRound: (input: StartRoundInput) => void;
+  readonly evolveRound: (input: {
+    modelsEnabled: { openai: boolean; gemini: boolean };
+    count: ImageCount;
+    aspect: AspectRatioConfig;
+  }) => void;
   readonly abortRound: () => void;
 }
 
@@ -65,6 +73,7 @@ export function RoundProvider({
   geminiCap = 5,
 }: RoundProviderProps) {
   const [round, setRound] = useState<Round | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const [queued, setQueued] = useState(0);
   const [selections, setSelections] = useState<readonly Selection[]>([]);
   const [commentary, setCommentary] = useState("");
@@ -152,8 +161,9 @@ export function RoundProvider({
       setCommentary("");
       setConsecutive429({ openai: 0, gemini: 0 });
 
-      startRoundOne(input).then(({ round: r, sessionId }) => {
+      startRoundOne(input).then(({ round: r, sessionId: sid }) => {
         setRound(r);
+        setSessionId(sid);
 
         fanOut({
           round: r,
@@ -167,6 +177,51 @@ export function RoundProvider({
       });
     },
     [handleSlotUpdate],
+  );
+
+  const evolveRound = useCallback(
+    (input: {
+      modelsEnabled: { openai: boolean; gemini: boolean };
+      count: ImageCount;
+      aspect: AspectRatioConfig;
+    }) => {
+      if (!round || !sessionId) return;
+
+      const controller = new AbortController();
+      abortRef.current = controller;
+
+      const currentSelections = [...selections];
+      const currentCommentary = commentary || null;
+
+      setSelections([]);
+      setCommentary("");
+      setConsecutive429({ openai: 0, gemini: 0 });
+
+      startRoundN({
+        sessionId,
+        priorRoundId: round.id,
+        selections: currentSelections,
+        commentary: currentCommentary,
+        modelsEnabled: input.modelsEnabled,
+        count: input.count,
+        aspect: input.aspect,
+      }).then(({ round: newRound, openaiRefs, geminiRefs }) => {
+        setRound(newRound);
+
+        fanOut({
+          round: newRound,
+          signal: controller.signal,
+          throttles: throttlesRef.current,
+          onSlotUpdate: handleSlotUpdate,
+          openaiRefs,
+          geminiRefs,
+        }).then((settled) => {
+          setRound(settled);
+          abortRef.current = null;
+        });
+      });
+    },
+    [round, sessionId, selections, commentary, handleSlotUpdate],
   );
 
   const abortRound = useCallback(() => {
@@ -192,12 +247,14 @@ export function RoundProvider({
       consecutive429Count: consecutive429,
       selections,
       commentary,
+      sessionId,
       toggleSelection,
       setCommentary,
       startRound,
+      evolveRound,
       abortRound,
     }),
-    [round, isRunning, done, total, queued, consecutive429, selections, commentary, toggleSelection, setCommentary, startRound, abortRound],
+    [round, isRunning, done, total, queued, consecutive429, selections, commentary, sessionId, toggleSelection, setCommentary, startRound, evolveRound, abortRound],
   );
 
   return (
