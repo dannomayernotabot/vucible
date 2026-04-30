@@ -28,7 +28,6 @@ export async function testGenerate(
         prompt: TEST_PROMPT,
         n: 1,
         size: "1024x1024",
-        response_format: "b64_json",
       }),
     });
   } catch (err) {
@@ -71,7 +70,6 @@ export async function generate(
       form.append("prompt", args.prompt);
       form.append("n", "1");
       form.append("size", `${args.size.width}x${args.size.height}`);
-      form.append("response_format", "b64_json");
       for (const ref of args.referenceImages!) {
         form.append("image[]", new Blob([ref.bytes], { type: ref.mimeType }));
       }
@@ -93,7 +91,6 @@ export async function generate(
           prompt: args.prompt,
           n: 1,
           size: `${args.size.width}x${args.size.height}`,
-          response_format: "b64_json",
         }),
         signal: args.signal,
       });
