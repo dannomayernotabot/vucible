@@ -11,6 +11,7 @@ import { StepIntro } from "./StepIntro";
 import { StepKeys } from "./StepKeys";
 import { StepDefaults } from "./StepDefaults";
 import { StepConfirm } from "./StepConfirm";
+import { WizardErrorBoundary } from "./WizardErrorBoundary";
 
 interface WizardShellProps {
   onComplete: () => void;
@@ -89,17 +90,19 @@ export function WizardShell({ onComplete }: WizardShellProps) {
   const stepLabel = `Step ${state.step} of 4`;
 
   return (
-    <WizardContext value={{ state, dispatch }}>
-      <div className="mx-auto flex min-h-screen max-w-lg flex-col items-center justify-center p-6">
-        <p className="mb-4 text-sm text-muted-foreground">{stepLabel}</p>
-        <div className="w-full">
-          {state.step === 1 && <StepIntro />}
-          {state.step === 2 && <StepKeys />}
-          {state.step === 3 && <StepDefaults />}
-          {state.step === 4 && <StepConfirm />}
+    <WizardErrorBoundary>
+      <WizardContext value={{ state, dispatch }}>
+        <div className="mx-auto flex min-h-screen max-w-lg flex-col items-center justify-center p-6">
+          <p className="mb-4 text-sm text-muted-foreground">{stepLabel}</p>
+          <div className="w-full">
+            {state.step === 1 && <StepIntro />}
+            {state.step === 2 && <StepKeys />}
+            {state.step === 3 && <StepDefaults />}
+            {state.step === 4 && <StepConfirm />}
+          </div>
         </div>
-      </div>
-    </WizardContext>
+      </WizardContext>
+    </WizardErrorBoundary>
   );
 }
 
