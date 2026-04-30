@@ -42,34 +42,60 @@ export async function testGenerate(
   return { ok: true, tier, ipm };
 }
 
+export interface ReferenceImage {
+  readonly bytes: ArrayBuffer;
+  readonly mimeType: string;
+}
+
 export async function generate(
   apiKey: string,
   args: {
     prompt: string;
     size: { width: number; height: number };
+    referenceImages?: ReferenceImage[];
     signal?: AbortSignal;
   },
 ): Promise<
   | { ok: true; image: ArrayBuffer; mimeType: string; meta: ImageMeta }
   | { ok: false; error: NormalizedError }
 > {
+  const hasRefs = args.referenceImages && args.referenceImages.length > 0;
+
   let response: Response;
   try {
-    response = await fetch(`${OPENAI_BASE}/images/generations`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: OPENAI_IMAGE_MODEL,
-        prompt: args.prompt,
-        n: 1,
-        size: `${args.size.width}x${args.size.height}`,
-        response_format: "b64_json",
-      }),
-      signal: args.signal,
-    });
+    if (hasRefs) {
+      const form = new FormData();
+      form.append("model", OPENAI_IMAGE_MODEL);
+      form.append("prompt", args.prompt);
+      form.append("n", "1");
+      form.append("size", `${args.size.width}x${args.size.height}`);
+      form.append("response_format", "b64_json");
+      for (const ref of args.referenceImages!) {
+        form.append("image[]", new Blob([ref.bytes], { type: ref.mimeType }));
+      }
+      response = await fetch(`${OPENAI_BASE}/images/generations`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${apiKey}` },
+        body: form,
+        signal: args.signal,
+      });
+    } else {
+      response = await fetch(`${OPENAI_BASE}/images/generations`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: OPENAI_IMAGE_MODEL,
+          prompt: args.prompt,
+          n: 1,
+          size: `${args.size.width}x${args.size.height}`,
+          response_format: "b64_json",
+        }),
+        signal: args.signal,
+      });
+    }
   } catch (err) {
     return { ok: false, error: mapNetworkError(err) };
   }

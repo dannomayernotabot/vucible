@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { http, HttpResponse } from "msw";
 import { server } from "../../../vitest.setup";
-import { listModels, generate, mapError } from "./gemini";
+import { listModels, generate, mapError, type ReferenceImage } from "./gemini";
 
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta";
 

@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { http, HttpResponse } from "msw";
 import { server } from "../../../vitest.setup";
 import { testGenerate, generate } from "./openai";
+import { PNG_1x1 } from "@/test/fixtures/images";
+import { JPEG_SAMPLE, WEBP_SAMPLE } from "@/test/fixtures/images";
 
 const OPENAI_BASE = "https://api.openai.com/v1";
 const API_KEY = "sk-test-key";

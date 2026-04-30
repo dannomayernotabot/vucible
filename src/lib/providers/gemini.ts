@@ -4,9 +4,15 @@ import type { GeminiSupportedRatio } from "./types";
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta";
 const GEMINI_IMAGE_MODEL = "gemini-2.0-flash-exp";
 
+export interface ReferenceImage {
+  readonly base64: string;
+  readonly mimeType: string;
+}
+
 export interface GenerateArgs {
   readonly prompt: string;
   readonly aspectRatio: GeminiSupportedRatio;
+  readonly referenceImages?: readonly ReferenceImage[];
   readonly signal?: AbortSignal;
 }
 
@@ -107,14 +113,19 @@ export async function generate(
   apiKey: string,
   args: GenerateArgs,
 ): Promise<GenerateResult> {
-  const { prompt, aspectRatio, signal } = args;
+  const { prompt, aspectRatio, referenceImages, signal } = args;
+
+  const parts: Record<string, unknown>[] = [{ text: prompt }];
+  if (referenceImages) {
+    for (const ref of referenceImages) {
+      parts.push({
+        inline_data: { mime_type: ref.mimeType, data: ref.base64 },
+      });
+    }
+  }
 
   const requestBody = {
-    contents: [
-      {
-        parts: [{ text: prompt }],
-      },
-    ],
+    contents: [{ parts }],
     generation_config: {
       response_modalities: ["TEXT", "IMAGE"],
       image: {
