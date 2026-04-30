@@ -92,6 +92,7 @@ export function HistoryRail({ open, onClose, onViewRound }: HistoryRailProps) {
                 type="button"
                 onClick={() => setViewedSessionId(undefined)}
                 className="mb-2 w-full text-left text-xs text-muted-foreground hover:text-foreground"
+                aria-label="Back to current session"
               >
                 ← Back to current session
               </button>

@@ -26,7 +26,7 @@ export class RootErrorBoundary extends Component<Props, State> {
   render() {
     if (this.state.hasError) {
       return (
-        <div className="flex min-h-screen flex-col items-center justify-center p-6 text-center">
+        <div className="flex min-h-screen flex-col items-center justify-center p-6 text-center" role="alert">
           <h2 className="text-xl font-semibold">Something went wrong</h2>
           <p className="mt-2 text-sm text-muted-foreground">
             An unexpected error occurred. Try refreshing the page.

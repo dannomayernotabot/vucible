@@ -48,12 +48,15 @@ function SettingsPanels() {
 
   return (
     <div className="space-y-4">
-      <div className="flex gap-2 border-b pb-2">
+      <div className="flex gap-2 border-b pb-2" role="tablist" aria-label="Settings sections">
         {(Object.keys(SECTION_LABELS) as Section[]).map((s) => (
           <Button
             key={s}
             variant={section === s ? "default" : "ghost"}
             size="sm"
+            role="tab"
+            aria-selected={section === s}
+            aria-controls={`panel-${s}`}
             onClick={() => setSection(s)}
           >
             {SECTION_LABELS[s]}
@@ -61,10 +64,12 @@ function SettingsPanels() {
         ))}
       </div>
 
-      {section === "keys" && <KeysPanel />}
-      {section === "defaults" && <DefaultsPanel />}
-      {section === "concurrency" && <ConcurrencyPanel />}
-      {section === "history" && <HistoryPanel />}
+      <div id={`panel-${section}`} role="tabpanel">
+        {section === "keys" && <KeysPanel />}
+        {section === "defaults" && <DefaultsPanel />}
+        {section === "concurrency" && <ConcurrencyPanel />}
+        {section === "history" && <HistoryPanel />}
+      </div>
     </div>
   );
 }

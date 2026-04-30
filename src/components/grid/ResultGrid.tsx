@@ -27,7 +27,7 @@ function countSuccesses(results: readonly { status: string }[]): number {
 }
 
 export function ResultGrid() {
-  const { round, isRunning, done, total, queued, selections, toggleSelection, regenerateSlot } =
+  const { round, isRunning, done, total, queued, selections, toggleSelection, regenerateSlot, evolveRound } =
     useRound();
 
   const [zoomState, setZoomState] = useState<{
@@ -118,6 +118,13 @@ export function ResultGrid() {
               selections.length === 0
                 ? "Pick 1-4 favorites to continue"
                 : undefined
+            }
+            onClick={() =>
+              evolveRound({
+                modelsEnabled: round.modelsEnabled,
+                count: round.imageCount,
+                aspect: round.aspect,
+              })
             }
           >
             Evolve

@@ -49,6 +49,7 @@ export function ScrollBackPanel({ roundId, onClose }: ScrollBackPanelProps) {
           type="button"
           onClick={onClose}
           className="text-xs text-muted-foreground hover:text-foreground"
+          aria-label="Back to current round"
         >
           Back to current
         </button>
