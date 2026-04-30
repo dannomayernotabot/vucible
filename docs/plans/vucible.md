@@ -1378,16 +1378,27 @@ Current pattern holds throttle slots for the entire retry chain, including `Retr
 
 Detection is unreliable and behaves differently across browsers. Three options: (a) silently best-effort (current lean) — keys persist for the tab session, history wipes on close; (b) detect and show a non-blocking banner; (c) detect and refuse to enter the wizard until the user opens a non-private tab. Lean: (b). Decide before Phase 3.
 
-### T. CORS browser-origin viability (§9.6) — load-bearing — RESEARCH INDICATES T1
+### T. CORS browser-origin viability (§9.6) — load-bearing — ~~RESOLVED: T1~~
 
-Phase 0 smoke test resolves to one of:
-- **(T1) Both providers allow browser-origin calls with permissive CORS → plan proceeds unchanged.** ← **Research (2026-04-30) strongly indicates this outcome.** OpenAI returns `Access-Control-Allow-Origin: *` on success; Gemini mirrors `Origin`. Both confirmed working from browser. See §14.A and §14.B for details.
-- (T2) OpenAI blocks → escalate per §9.6 mitigation. Author favors **option A (thin Vercel Edge proxy for OpenAI only)** over dropping OpenAI; would require new DD-024 documenting the deviation from DD-001.
-- (T3) Gemini blocks → drop Gemini; the wizard tier dropdown already supports OpenAI-only flow.
+**Outcome: T1 — both providers allow browser-origin calls. No proxy needed. Plan proceeds unchanged.**
 
-**Decision deadline:** before Phase 1 starts (no Phase 1 work is salvageable if the architecture pivots).
+Verified 2026-04-29 via `src/__tests__/cors-smoke.test.ts` (7 assertions, all pass, junk keys). Results:
 
-**Known caveat (from research):** OpenAI's Cloudflare edge returns 401 WITHOUT CORS headers when the API key is invalid. The browser sees "Failed to fetch" (opaque error), not a clean JSON 401. This is NOT a CORS block — it's an auth-path edge case. Wizard key validation must handle this: if fetch throws on OpenAI test-gen, surface "API key may be invalid" rather than "CORS blocked". The smoke test (`scripts/cors-smoke.html`) documents this distinction.
+| Endpoint | Method | HTTP | CORS `Access-Control-Allow-Origin` |
+|---|---|---|---|
+| OpenAI `/v1/images/generations` | OPTIONS preflight | 200 | `*` (+ allow-methods, allow-headers) |
+| OpenAI `/v1/images/edits` | OPTIONS preflight | 200 | `*` |
+| OpenAI `/v1/models` | GET (401 junk key) | 401 | `*` |
+| OpenAI `/v1/images/generations` | POST (401 junk key) | 401 | **null** (Cloudflare strips on 401) |
+| Gemini `/v1/models` | GET (400 junk key) | 400 | exact origin |
+| Gemini v1beta `generateContent` | OPTIONS preflight | 200 | exact origin |
+| Gemini v1beta `generateContent` | POST (400 junk key) | 400 | exact origin |
+
+**Gemini: fully CORS-clean.** All endpoints return proper CORS headers even on error responses.
+
+**OpenAI: CORS-clean for the happy path.** Preflights pass (`Access-Control-Allow-Origin: *`), and valid-key 200 responses will have CORS headers. One caveat: Cloudflare strips CORS headers on 401 responses to the image endpoints (but NOT to `/v1/models`).
+
+**Caveat impact on wizard validation (DD-022):** The wizard's `testGenerate` call uses `/v1/images/generations`. If the user enters a bad key, the 401 response is CORS-opaque in a browser — JS sees a generic `TypeError: Failed to fetch`, not a clean JSON error. **Workaround:** validate the key first via `GET /v1/models` (CORS-clean on 401, reads the error body), then only call `testGenerate` once the key is confirmed valid. This adds one extra free call to the wizard validation path but eliminates the opaque-error UX problem. Provider client should implement: `validateKey()` (via `/v1/models`) → if ok → `testGenerate()` (via `/v1/images/generations`) for tier detection.
 
 ### U. Stale `validatedAt` re-validation policy
 
