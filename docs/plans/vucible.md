@@ -1374,9 +1374,13 @@ Should v1 require automated axe pass before merge to main? Lean: manual axe-devt
 
 Current pattern holds throttle slots for the entire retry chain, including `Retry-After` waits. Acceptable for v1 (rationale in §6.5). Profile after launch — if real-world latency profiling shows hold-the-slot is a meaningful contributor, refactor to release-and-re-enqueue with a `throttle.pauseFor()` mechanism. v2 candidate.
 
-### S. Private-browsing UX (§9.5)
+### S. Private-browsing UX (§9.5) — RESOLVED: (b)
 
-Detection is unreliable and behaves differently across browsers. Three options: (a) silently best-effort (current lean) — keys persist for the tab session, history wipes on close; (b) detect and show a non-blocking banner; (c) detect and refuse to enter the wizard until the user opens a non-private tab. Lean: (b). Decide before Phase 3.
+**Decision: (b) — detect and show non-blocking banner.** Implemented 2026-04-29.
+
+Detection: `src/lib/storage/detect-private.ts` probes localStorage (catches Safari QuotaExceededError) and IndexedDB (catches Firefox InvalidStateError). Banner: `src/components/feedback/PrivateModeBanner.tsx` — non-blocking alert shown on wizard step 1 and AppShell mount when private mode detected. Message: "Your API keys and generation history won't persist between sessions."
+
+Not (a) because silent failure confuses users who enter keys and lose them. Not (c) because blocking the wizard is too aggressive — the app still works within a single session.
 
 ### T. CORS browser-origin viability (§9.6) — load-bearing — ~~RESOLVED: T1~~
 
