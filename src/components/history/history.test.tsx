@@ -5,7 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, fireEvent, act } from "@testing-library/react";
 import { HistoryRail } from "./HistoryRail";
 import { RoundCard } from "./RoundCard";
-import type { Round, RoundResult } from "@/lib/storage/schema";
+import { SessionsList } from "./SessionsList";
+import type { Round, RoundResult, Session } from "@/lib/storage/schema";
 import { thumbnailCache } from "@/lib/round/image-cache";
 
 vi.mock("@/lib/round/image-cache", () => ({
@@ -17,9 +18,11 @@ vi.mock("@/lib/round/image-cache", () => ({
 }));
 
 const mockListRoundsBySession = vi.fn(async () => [] as Round[]);
+const mockListSessions = vi.fn(async () => [] as Session[]);
 
 vi.mock("@/lib/storage/history", () => ({
   listRoundsBySession: (...args: unknown[]) => mockListRoundsBySession(...args),
+  listSessions: (...args: unknown[]) => mockListSessions(...args),
 }));
 
 let mockRound: Round | null = null;
@@ -41,6 +44,8 @@ afterEach(() => {
   cleanup();
   mockListRoundsBySession.mockReset();
   mockListRoundsBySession.mockResolvedValue([]);
+  mockListSessions.mockReset();
+  mockListSessions.mockResolvedValue([]);
   mockRound = null;
 });
 
@@ -210,5 +215,224 @@ describe("RoundCard", () => {
     );
     const gridItems = container.querySelectorAll(".aspect-square");
     expect(gridItems.length).toBe(8);
+  });
+});
+
+function makeSession(overrides?: Partial<Session>): Session {
+  return {
+    id: "s1",
+    startedAt: "2026-04-28T10:00:00.000Z",
+    originalPrompt: "A majestic mountain landscape",
+    roundIds: ["r1", "r2"],
+    ...overrides,
+  };
+}
+
+describe("SessionsList", () => {
+  it("renders sessions with prompt and date", async () => {
+    mockListSessions.mockResolvedValue([
+      makeSession(),
+      makeSession({ id: "s2", originalPrompt: "A serene ocean view", roundIds: ["r3"] }),
+    ]);
+
+    await act(async () => {
+      render(
+        <SessionsList
+          activeSessionId="s1"
+          onSelectSession={() => {}}
+          onBack={() => {}}
+        />,
+      );
+    });
+
+    expect(screen.getByText("A majestic mountain landscape")).toBeDefined();
+    expect(screen.getByText("A serene ocean view")).toBeDefined();
+    expect(screen.getByText(/2 rounds/)).toBeDefined();
+    expect(screen.getByText(/1 round$/)).toBeDefined();
+  });
+
+  it("shows empty state when no sessions", async () => {
+    mockListSessions.mockResolvedValue([]);
+
+    await act(async () => {
+      render(
+        <SessionsList
+          activeSessionId={undefined}
+          onSelectSession={() => {}}
+          onBack={() => {}}
+        />,
+      );
+    });
+
+    expect(screen.getByText("No sessions yet")).toBeDefined();
+  });
+
+  it("calls onSelectSession on click", async () => {
+    const onSelect = vi.fn();
+    mockListSessions.mockResolvedValue([makeSession()]);
+
+    await act(async () => {
+      render(
+        <SessionsList
+          activeSessionId={undefined}
+          onSelectSession={onSelect}
+          onBack={() => {}}
+        />,
+      );
+    });
+
+    fireEvent.click(screen.getByText("A majestic mountain landscape"));
+    expect(onSelect).toHaveBeenCalledWith("s1");
+  });
+
+  it("marks active session with aria-current", async () => {
+    mockListSessions.mockResolvedValue([
+      makeSession(),
+      makeSession({ id: "s2", originalPrompt: "Another prompt" }),
+    ]);
+
+    await act(async () => {
+      render(
+        <SessionsList
+          activeSessionId="s1"
+          onSelectSession={() => {}}
+          onBack={() => {}}
+        />,
+      );
+    });
+
+    const buttons = screen.getAllByRole("button").filter(b => b.getAttribute("aria-current") === "true");
+    expect(buttons).toHaveLength(1);
+  });
+
+  it("calls onBack when back button clicked", async () => {
+    const onBack = vi.fn();
+    mockListSessions.mockResolvedValue([]);
+
+    await act(async () => {
+      render(
+        <SessionsList
+          activeSessionId={undefined}
+          onSelectSession={() => {}}
+          onBack={onBack}
+        />,
+      );
+    });
+
+    fireEvent.click(screen.getByLabelText("Back to rounds"));
+    expect(onBack).toHaveBeenCalledOnce();
+  });
+
+  it("truncates long prompts", async () => {
+    const long = "A".repeat(100);
+    mockListSessions.mockResolvedValue([makeSession({ originalPrompt: long })]);
+
+    await act(async () => {
+      render(
+        <SessionsList
+          activeSessionId={undefined}
+          onSelectSession={() => {}}
+          onBack={() => {}}
+        />,
+      );
+    });
+
+    const text = screen.getByText(/^A+…$/);
+    expect(text.textContent!.length).toBe(60);
+  });
+});
+
+describe("HistoryRail cross-session navigation", () => {
+  it("shows Sessions button in rounds view", async () => {
+    mockRound = makeRound();
+
+    await act(async () => {
+      render(<HistoryRail open={true} onClose={() => {}} />);
+    });
+
+    expect(screen.getByLabelText("View all sessions")).toBeDefined();
+  });
+
+  it("switches to sessions view on Sessions click", async () => {
+    mockRound = makeRound();
+    mockListSessions.mockResolvedValue([makeSession()]);
+
+    await act(async () => {
+      render(<HistoryRail open={true} onClose={() => {}} />);
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText("View all sessions"));
+    });
+
+    expect(screen.getByText("Sessions")).toBeDefined();
+    expect(screen.getByText("A majestic mountain landscape")).toBeDefined();
+  });
+
+  it("selecting a session loads its rounds", async () => {
+    mockRound = makeRound();
+    mockListSessions.mockResolvedValue([
+      makeSession({ id: "s2", originalPrompt: "Other session" }),
+    ]);
+    mockListRoundsBySession.mockResolvedValue([]);
+
+    await act(async () => {
+      render(<HistoryRail open={true} onClose={() => {}} />);
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText("View all sessions"));
+    });
+
+    mockListRoundsBySession.mockResolvedValue([makeRound({ id: "r5", sessionId: "s2" })]);
+
+    await act(async () => {
+      fireEvent.click(screen.getByText("Other session"));
+    });
+
+    expect(mockListRoundsBySession).toHaveBeenCalledWith("s2");
+  });
+
+  it("shows back-to-current link when viewing past session", async () => {
+    mockRound = makeRound();
+    mockListSessions.mockResolvedValue([
+      makeSession({ id: "s2", originalPrompt: "Other session" }),
+    ]);
+
+    await act(async () => {
+      render(<HistoryRail open={true} onClose={() => {}} />);
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText("View all sessions"));
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByText("Other session"));
+    });
+
+    expect(screen.getByText("← Back to current session")).toBeDefined();
+  });
+
+  it("resets view when rail closes and reopens", async () => {
+    mockRound = makeRound();
+    mockListSessions.mockResolvedValue([makeSession()]);
+
+    const { rerender } = render(<HistoryRail open={true} onClose={() => {}} />);
+
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText("View all sessions"));
+    });
+
+    await act(async () => {
+      rerender(<HistoryRail open={false} onClose={() => {}} />);
+    });
+
+    await act(async () => {
+      rerender(<HistoryRail open={true} onClose={() => {}} />);
+    });
+
+    expect(screen.getByLabelText("View all sessions")).toBeDefined();
+    expect(screen.queryByText("Sessions")).toBeNull();
   });
 });
