@@ -4,7 +4,9 @@ import { useCallback, useEffect, useState } from "react";
 import { TopBar } from "./TopBar";
 import { ThemeProvider } from "./ThemeProvider";
 import { HistoryRail } from "@/components/history/HistoryRail";
+import { HistoryErrorBoundary } from "@/components/history/HistoryErrorBoundary";
 import { ScrollBackPanel } from "@/components/history/ScrollBackPanel";
+import { RoundErrorBoundary } from "@/components/round/RoundErrorBoundary";
 import { findOrphanRounds, markRoundOrphaned } from "@/lib/storage/history";
 
 interface AppShellProps {
@@ -39,20 +41,24 @@ export function AppShell({ children }: AppShellProps) {
       <div className="flex min-h-screen flex-col">
         <TopBar onToggleHistory={toggleHistory} />
         <div className="flex flex-1 overflow-hidden">
-          <HistoryRail
-            open={historyOpen}
-            onClose={() => setHistoryOpen(false)}
-            onViewRound={handleViewRound}
-          />
+          <HistoryErrorBoundary>
+            <HistoryRail
+              open={historyOpen}
+              onClose={() => setHistoryOpen(false)}
+              onViewRound={handleViewRound}
+            />
+          </HistoryErrorBoundary>
           <main className="flex flex-1 flex-col overflow-y-auto">
-            {viewedRoundId ? (
-              <ScrollBackPanel
-                roundId={viewedRoundId}
-                onClose={() => setViewedRoundId(null)}
-              />
-            ) : (
-              children
-            )}
+            <RoundErrorBoundary>
+              {viewedRoundId ? (
+                <ScrollBackPanel
+                  roundId={viewedRoundId}
+                  onClose={() => setViewedRoundId(null)}
+                />
+              ) : (
+                children
+              )}
+            </RoundErrorBoundary>
           </main>
         </div>
       </div>

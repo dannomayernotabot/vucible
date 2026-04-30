@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import dynamic from "next/dynamic";
 import { getStorage } from "@/lib/storage/keys";
+import { RootErrorBoundary } from "@/components/feedback/RootErrorBoundary";
 
 const WizardShell = dynamic(
   () =>
@@ -39,8 +40,16 @@ export default function WizardOrApp() {
   }
 
   if (gate === "wizard") {
-    return <WizardShell onComplete={() => setGate("app")} />;
+    return (
+      <RootErrorBoundary>
+        <WizardShell onComplete={() => setGate("app")} />
+      </RootErrorBoundary>
+    );
   }
 
-  return <AppShell />;
+  return (
+    <RootErrorBoundary>
+      <AppShell />
+    </RootErrorBoundary>
+  );
 }
