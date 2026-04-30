@@ -157,3 +157,28 @@ describe("ImageCache", () => {
     expect(revokedUrls).toHaveLength(2);
   });
 });
+
+describe("ThumbnailCache eviction at scale", () => {
+  it("300 mount/unmount cycles: evicts refcount-0 entries, never revokes refcount-positive", () => {
+    const cache = new ImageCache(256);
+
+    for (let i = 0; i < 300; i++) {
+      cache.get("r1", `thumb-${i}`, BYTES, MIME);
+      cache.release("r1", `thumb-${i}`);
+    }
+
+    expect(revokedUrls.length).toBeGreaterThan(0);
+    expect(cache.size).toBeLessThanOrEqual(256);
+
+    const holdUrl = cache.get("r1", "held", BYTES, MIME);
+    revokedUrls.length = 0;
+
+    for (let i = 300; i < 600; i++) {
+      cache.get("r1", `thumb-${i}`, BYTES, MIME);
+      cache.release("r1", `thumb-${i}`);
+    }
+
+    expect(revokedUrls).not.toContain(holdUrl);
+    expect(cache.size).toBeLessThanOrEqual(257);
+  });
+});
