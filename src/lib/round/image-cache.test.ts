@@ -145,4 +145,15 @@ describe("ImageCache", () => {
       .calls[0][0] as Blob;
     expect(blobArg.type).toBe("image/webp");
   });
+
+  it("clear revokes all URLs and empties cache", () => {
+    const cache = new ImageCache(10);
+    cache.get("r1", "s0", BYTES, MIME);
+    cache.get("r1", "s1", BYTES, MIME);
+    expect(cache.size).toBe(2);
+
+    cache.clear();
+    expect(cache.size).toBe(0);
+    expect(revokedUrls).toHaveLength(2);
+  });
 });

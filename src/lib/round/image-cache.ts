@@ -83,6 +83,14 @@ export class ImageCache {
     }
   }
 
+  clear(): void {
+    for (const entry of this.entries.values()) {
+      URL.revokeObjectURL(entry.url);
+    }
+    this.entries.clear();
+    this.accessCounter = 0;
+  }
+
   get size(): number {
     return this.entries.size;
   }
