@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { TopBar } from "./TopBar";
 import { ThemeProvider } from "./ThemeProvider";
+import { HistoryRail } from "@/components/history/HistoryRail";
 import { findOrphanRounds, markRoundOrphaned } from "@/lib/storage/history";
 
 interface AppShellProps {
@@ -10,6 +11,12 @@ interface AppShellProps {
 }
 
 export function AppShell({ children }: AppShellProps) {
+  const [historyOpen, setHistoryOpen] = useState(false);
+
+  const toggleHistory = useCallback(() => {
+    setHistoryOpen((prev) => !prev);
+  }, []);
+
   useEffect(() => {
     findOrphanRounds().then((orphans) => {
       for (const round of orphans) {
@@ -24,8 +31,11 @@ export function AppShell({ children }: AppShellProps) {
   return (
     <ThemeProvider>
       <div className="flex min-h-screen flex-col">
-        <TopBar />
-        <main className="flex flex-1 flex-col">{children}</main>
+        <TopBar onToggleHistory={toggleHistory} />
+        <div className="flex flex-1 overflow-hidden">
+          <HistoryRail open={historyOpen} onClose={() => setHistoryOpen(false)} />
+          <main className="flex flex-1 flex-col overflow-y-auto">{children}</main>
+        </div>
       </div>
     </ThemeProvider>
   );

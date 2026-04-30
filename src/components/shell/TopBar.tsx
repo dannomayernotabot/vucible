@@ -4,13 +4,23 @@ import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "./ThemeToggle";
 import { SettingsDialog } from "@/components/settings/SettingsDialog";
 
-export function TopBar() {
+interface TopBarProps {
+  readonly onToggleHistory?: () => void;
+}
+
+export function TopBar({ onToggleHistory }: TopBarProps) {
   return (
     <header className="flex h-14 shrink-0 items-center justify-between border-b px-4">
       <span className="text-lg font-semibold tracking-tight">vucible</span>
 
       <div className="flex items-center gap-1">
-        <Button variant="ghost" size="icon" aria-label="History" disabled>
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label="History"
+          onClick={onToggleHistory}
+          disabled={!onToggleHistory}
+        >
           <HistoryIcon />
         </Button>
         <ThemeToggle />
