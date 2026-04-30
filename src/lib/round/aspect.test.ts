@@ -117,4 +117,30 @@ describe("snapAspectIfNeeded", () => {
       expect(result).toEqual({ kind: "discrete", ratio });
     },
   );
+
+  const FREEFORM_SNAP_CASES: [number, number, string][] = [
+    [100, 100, "1:1"],
+    [100, 400, "1:4"],
+    [100, 800, "1:8"],
+    [200, 300, "2:3"],
+    [300, 200, "3:2"],
+    [300, 400, "3:4"],
+    [400, 100, "4:1"],
+    [400, 300, "4:3"],
+    [400, 500, "4:5"],
+    [500, 400, "5:4"],
+    [800, 100, "8:1"],
+    [900, 1600, "9:16"],
+    [1600, 900, "16:9"],
+    [2100, 900, "21:9"],
+  ];
+
+  it.each(FREEFORM_SNAP_CASES)(
+    "freeform %dx%d snaps to %s with Gemini",
+    (w, h, expected) => {
+      const aspect: AspectRatioConfig = { kind: "freeform", width: w, height: h };
+      const result = snapAspectIfNeeded(aspect, { gemini: geminiConfig });
+      expect(result).toEqual({ kind: "discrete", ratio: expected });
+    },
+  );
 });

@@ -132,6 +132,12 @@ describe("keys.ts", () => {
     });
   });
 
+  describe("missing key", () => {
+    it("returns null when key was never set", () => {
+      expect(getStorage()).toBeNull();
+    });
+  });
+
   describe("malformed input", () => {
     it("returns null for invalid JSON", () => {
       window.localStorage.setItem(STORAGE_KEY, "not json {{{");
