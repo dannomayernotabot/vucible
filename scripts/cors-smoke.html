@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>vucible — CORS Smoke Test</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, -apple-system, sans-serif; background: #0a0a0a; color: #e5e5e5; padding: 2rem; max-width: 900px; margin: 0 auto; }
+    h1 { font-size: 1.5rem; margin-bottom: 0.5rem; }
+    .subtitle { color: #737373; margin-bottom: 2rem; font-size: 0.875rem; }
+    .section { background: #171717; border: 1px solid #262626; border-radius: 8px; padding: 1.5rem; margin-bottom: 1.5rem; }
+    .section h2 { font-size: 1.125rem; margin-bottom: 1rem; }
+    label { display: block; font-size: 0.875rem; color: #a3a3a3; margin-bottom: 0.25rem; }
+    input[type="text"] { width: 100%; padding: 0.5rem 0.75rem; background: #262626; border: 1px solid #404040; border-radius: 6px; color: #e5e5e5; font-family: monospace; font-size: 0.875rem; margin-bottom: 1rem; }
+    button { padding: 0.5rem 1rem; border-radius: 6px; border: none; cursor: pointer; font-size: 0.875rem; font-weight: 500; }
+    .btn-primary { background: #3b82f6; color: white; }
+    .btn-primary:disabled { background: #1e3a5f; cursor: not-allowed; }
+    .btn-secondary { background: #404040; color: #e5e5e5; }
+    .result { margin-top: 1rem; padding: 1rem; border-radius: 6px; font-family: monospace; font-size: 0.8125rem; white-space: pre-wrap; word-break: break-all; max-height: 400px; overflow-y: auto; }
+    .result.pass { background: #052e16; border: 1px solid #166534; color: #86efac; }
+    .result.fail { background: #450a0a; border: 1px solid #991b1b; color: #fca5a5; }
+    .result.info { background: #1a1a2e; border: 1px solid #312e81; color: #c4b5fd; }
+    .result.pending { background: #1c1917; border: 1px solid #44403c; color: #d6d3d1; }
+    .test-row { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.5rem; }
+    .test-row .status { width: 1.25rem; height: 1.25rem; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 0.75rem; flex-shrink: 0; }
+    .status.waiting { background: #404040; }
+    .status.running { background: #854d0e; }
+    .status.pass { background: #166534; }
+    .status.fail { background: #991b1b; }
+    .cost-note { background: #422006; border: 1px solid #854d0e; padding: 0.75rem 1rem; border-radius: 6px; margin-bottom: 1rem; font-size: 0.8125rem; color: #fbbf24; }
+    .summary { margin-top: 2rem; padding: 1.5rem; border-radius: 8px; font-size: 1rem; }
+    .summary.t1 { background: #052e16; border: 2px solid #166534; color: #86efac; }
+    .summary.t2 { background: #422006; border: 2px solid #854d0e; color: #fbbf24; }
+    .summary.t3 { background: #450a0a; border: 2px solid #991b1b; color: #fca5a5; }
+    details { margin-top: 0.5rem; }
+    summary { cursor: pointer; color: #a3a3a3; font-size: 0.8125rem; }
+  </style>
+</head>
+<body>
+  <h1>vucible CORS Smoke Test</h1>
+  <p class="subtitle">
+    Tests whether OpenAI and Gemini image generation APIs accept browser-origin calls.
+    Open DevTools Network tab before running. Results determine architecture (§9.6 / §14.T).
+  </p>
+
+  <div class="section">
+    <h2>API Keys</h2>
+    <label for="openai-key">OpenAI API Key</label>
+    <input type="text" id="openai-key" placeholder="sk-..." autocomplete="off">
+
+    <label for="gemini-key">Gemini API Key</label>
+    <input type="text" id="gemini-key" placeholder="AI..." autocomplete="off">
+
+    <div class="cost-note">
+      OpenAI test generates one tiny image (~$0.02 at 256x256). Gemini list-models is free.
+      Gemini generateContent with image output may cost depending on your tier.
+      <br><br>
+      <strong>Note:</strong> OpenAI returns CORS headers on success but NOT on 401 errors
+      (Cloudflare edge strips them). If your key is wrong, you'll see a generic "Failed to fetch"
+      instead of a clean error — that's expected, not a CORS block.
+    </div>
+
+    <button class="btn-primary" id="run-all" onclick="runAll()">Run All Tests</button>
+    <button class="btn-secondary" onclick="clearResults()" style="margin-left: 0.5rem;">Clear</button>
+  </div>
+
+  <!-- OpenAI Tests -->
+  <div class="section">
+    <h2>OpenAI</h2>
+    <div class="test-row">
+      <span class="status waiting" id="oai-1-status"></span>
+      <span>Test 1: POST /v1/images/generations (minimal body)</span>
+    </div>
+    <div id="oai-1-result"></div>
+
+    <div class="test-row" style="margin-top: 1rem;">
+      <span class="status waiting" id="oai-2-status"></span>
+      <span>Test 2: GET /v1/models (list models — free, auth check)</span>
+    </div>
+    <div id="oai-2-result"></div>
+  </div>
+
+  <!-- Gemini Tests -->
+  <div class="section">
+    <h2>Gemini</h2>
+    <div class="test-row">
+      <span class="status waiting" id="gem-1-status"></span>
+      <span>Test 3: GET /v1/models (list models — free)</span>
+    </div>
+    <div id="gem-1-result"></div>
+
+    <div class="test-row" style="margin-top: 1rem;">
+      <span class="status waiting" id="gem-2-status"></span>
+      <span>Test 4: POST generateContent — text-only (image generation)</span>
+    </div>
+    <div id="gem-2-result"></div>
+
+    <div class="test-row" style="margin-top: 1rem;">
+      <span class="status waiting" id="gem-3-status"></span>
+      <span>Test 5: POST generateContent — with inline image ref (evolution)</span>
+    </div>
+    <div id="gem-3-result"></div>
+  </div>
+
+  <!-- Summary -->
+  <div id="summary"></div>
+
+  <script>
+    function setStatus(id, state) {
+      const el = document.getElementById(id);
+      el.className = 'status ' + state;
+      el.textContent = state === 'pass' ? '✓' : state === 'fail' ? '✗' : state === 'running' ? '…' : '';
+    }
+
+    function setResult(id, cls, text) {
+      const el = document.getElementById(id);
+      el.innerHTML = `<div class="result ${cls}">${escapeHtml(text)}</div>`;
+    }
+
+    function escapeHtml(s) {
+      return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    function headersToObj(headers) {
+      const obj = {};
+      headers.forEach((v, k) => { obj[k] = v; });
+      return obj;
+    }
+
+    function corsHeaders(headers) {
+      const cors = {};
+      headers.forEach((v, k) => {
+        if (k.toLowerCase().startsWith('access-control')) cors[k] = v;
+      });
+      return cors;
+    }
+
+    function rateLimitHeaders(headers) {
+      const rl = {};
+      headers.forEach((v, k) => {
+        if (k.toLowerCase().startsWith('x-ratelimit')) rl[k] = v;
+      });
+      return rl;
+    }
+
+    function clearResults() {
+      ['oai-1', 'oai-2', 'gem-1', 'gem-2', 'gem-3'].forEach(id => {
+        setStatus(id + '-status', 'waiting');
+        document.getElementById(id + '-result').innerHTML = '';
+      });
+      document.getElementById('summary').innerHTML = '';
+    }
+
+    const results = {};
+
+    async function testOpenAIImageGen(apiKey) {
+      setStatus('oai-1-status', 'running');
+      try {
+        const resp = await fetch('https://api.openai.com/v1/images/generations', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({
+            model: 'gpt-image-1',
+            prompt: 'a single solid color square, minimal',
+            n: 1,
+            size: '256x256',
+            quality: 'low',
+          }),
+        });
+
+        const cors = corsHeaders(resp.headers);
+        const rl = rateLimitHeaders(resp.headers);
+        const body = await resp.text();
+        let parsed;
+        try { parsed = JSON.parse(body); } catch { parsed = body; }
+
+        const info = [
+          `Status: ${resp.status} ${resp.statusText}`,
+          `CORS headers: ${JSON.stringify(cors, null, 2)}`,
+          `Rate-limit headers: ${JSON.stringify(rl, null, 2)}`,
+          `Response type: ${resp.type}`,
+          `Body preview: ${typeof parsed === 'object' ? JSON.stringify(parsed, null, 2).slice(0, 500) : String(body).slice(0, 500)}`,
+        ].join('\n');
+
+        if (resp.ok) {
+          setStatus('oai-1-status', 'pass');
+          setResult('oai-1-result', 'pass', `PASS — Browser-origin image gen succeeded.\n\n${info}`);
+          results.oai1 = 'pass';
+        } else {
+          setStatus('oai-1-status', 'fail');
+          setResult('oai-1-result', 'fail', `FAIL — HTTP ${resp.status}.\n\n${info}`);
+          results.oai1 = 'fail';
+        }
+      } catch (err) {
+        setStatus('oai-1-status', 'fail');
+        const msg = err.message || String(err);
+        const isCors = msg.includes('CORS') || msg.includes('Failed to fetch') || msg.includes('NetworkError') || msg.includes('Load failed');
+        setResult('oai-1-result', 'fail',
+          `FAIL — ${isCors ? 'Network/CORS error' : 'Network error'}.\n\nError: ${msg}\n\n` +
+          (isCors
+            ? 'Check DevTools Network tab:\n' +
+              '• If OPTIONS preflight was blocked → true CORS block (T2 outcome).\n' +
+              '• If OPTIONS succeeded but POST returned 401 with no CORS headers → invalid API key (OpenAI edge strips CORS on 401). Re-check key.\n' +
+              '• If no preflight at all → network issue.'
+            : '')
+        );
+        results.oai1 = 'fail';
+      }
+    }
+
+    async function testOpenAIModels(apiKey) {
+      setStatus('oai-2-status', 'running');
+      try {
+        const resp = await fetch('https://api.openai.com/v1/models', {
+          headers: { 'Authorization': `Bearer ${apiKey}` },
+        });
+
+        const cors = corsHeaders(resp.headers);
+        const body = await resp.text();
+        let parsed;
+        try { parsed = JSON.parse(body); } catch { parsed = body; }
+
+        const imageModels = typeof parsed === 'object' && parsed.data
+          ? parsed.data.filter(m => m.id && (m.id.includes('gpt-image') || m.id.includes('dall-e') || m.id.includes('image'))).map(m => m.id).sort()
+          : [];
+
+        const info = [
+          `Status: ${resp.status} ${resp.statusText}`,
+          `CORS headers: ${JSON.stringify(cors, null, 2)}`,
+          `Response type: ${resp.type}`,
+          imageModels.length > 0 ? `Image-related models found: ${imageModels.join(', ')}` : 'No image-related models found in listing.',
+          `Total models: ${parsed?.data?.length ?? 'N/A'}`,
+        ].join('\n');
+
+        if (resp.ok) {
+          setStatus('oai-2-status', 'pass');
+          setResult('oai-2-result', 'pass', `PASS — Models list accessible.\n\n${info}`);
+          results.oai2 = 'pass';
+        } else {
+          setStatus('oai-2-status', 'fail');
+          setResult('oai-2-result', 'fail', `FAIL — HTTP ${resp.status}.\n\n${info}`);
+          results.oai2 = 'fail';
+        }
+      } catch (err) {
+        setStatus('oai-2-status', 'fail');
+        setResult('oai-2-result', 'fail', `FAIL — ${err.message || err}`);
+        results.oai2 = 'fail';
+      }
+    }
+
+    async function testGeminiModels(apiKey) {
+      setStatus('gem-1-status', 'running');
+      try {
+        const resp = await fetch(`https://generativelanguage.googleapis.com/v1/models?key=${apiKey}`);
+
+        const cors = corsHeaders(resp.headers);
+        const body = await resp.text();
+        let parsed;
+        try { parsed = JSON.parse(body); } catch { parsed = body; }
+
+        const imageModels = typeof parsed === 'object' && parsed.models
+          ? parsed.models.filter(m => m.name && (m.name.includes('image') || m.name.includes('flash-image') || m.name.includes('pro-image'))).map(m => `${m.name} (${m.displayName || 'N/A'})`)
+          : [];
+
+        const info = [
+          `Status: ${resp.status} ${resp.statusText}`,
+          `CORS headers: ${JSON.stringify(cors, null, 2)}`,
+          `Response type: ${resp.type}`,
+          imageModels.length > 0 ? `Image-capable models:\n  ${imageModels.join('\n  ')}` : 'No image-capable models found.',
+          `Total models: ${parsed?.models?.length ?? 'N/A'}`,
+        ].join('\n');
+
+        if (resp.ok) {
+          setStatus('gem-1-status', 'pass');
+          setResult('gem-1-result', 'pass', `PASS — Gemini models list accessible.\n\n${info}`);
+          results.gem1 = 'pass';
+        } else {
+          setStatus('gem-1-status', 'fail');
+          setResult('gem-1-result', 'fail', `FAIL — HTTP ${resp.status}.\n\n${info}`);
+          results.gem1 = 'fail';
+        }
+      } catch (err) {
+        setStatus('gem-1-status', 'fail');
+        setResult('gem-1-result', 'fail', `FAIL — ${err.message || err}`);
+        results.gem1 = 'fail';
+      }
+    }
+
+    async function testGeminiGenerateText(apiKey) {
+      setStatus('gem-2-status', 'running');
+      const modelsToTry = [
+        'gemini-2.5-flash-image',
+        'gemini-2.0-flash-preview-image-generation',
+        'gemini-2.0-flash-exp-image-generation',
+        'gemini-3.1-flash-image-preview',
+      ];
+
+      for (const model of modelsToTry) {
+        try {
+          const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+          const resp = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{
+                parts: [{ text: 'Generate a small solid blue square image, 64x64 pixels.' }],
+              }],
+              generationConfig: {
+                responseModalities: ['TEXT', 'IMAGE'],
+              },
+            }),
+          });
+
+          const cors = corsHeaders(resp.headers);
+          const body = await resp.text();
+          let parsed;
+          try { parsed = JSON.parse(body); } catch { parsed = body; }
+
+          const hasImage = typeof parsed === 'object' && parsed.candidates?.[0]?.content?.parts?.some(p => p.inlineData);
+
+          const info = [
+            `Model: ${model}`,
+            `Status: ${resp.status} ${resp.statusText}`,
+            `CORS headers: ${JSON.stringify(cors, null, 2)}`,
+            `Response type: ${resp.type}`,
+            `Contains image data: ${hasImage}`,
+            `Body preview: ${JSON.stringify(parsed, null, 2).slice(0, 800)}`,
+          ].join('\n');
+
+          if (resp.ok && hasImage) {
+            setStatus('gem-2-status', 'pass');
+            setResult('gem-2-result', 'pass', `PASS — Gemini image generation works from browser.\n\n${info}`);
+            results.gem2 = 'pass';
+            results.geminiModel = model;
+            return;
+          } else if (resp.ok) {
+            setStatus('gem-2-status', 'pass');
+            setResult('gem-2-result', 'info', `PARTIAL — Response OK but no image data. Model may not support image output.\n\n${info}`);
+            results.gem2 = 'partial';
+            results.geminiModel = model;
+            return;
+          }
+          // If 404, try next model
+          if (resp.status === 404) continue;
+
+          // Other error — report and stop
+          setStatus('gem-2-status', 'fail');
+          setResult('gem-2-result', 'fail', `FAIL — HTTP ${resp.status} for model ${model}.\n\n${info}`);
+          results.gem2 = 'fail';
+          return;
+        } catch (err) {
+          const msg = err.message || String(err);
+          const isCors = msg.includes('CORS') || msg.includes('Failed to fetch') || msg.includes('Load failed');
+          if (isCors) {
+            setStatus('gem-2-status', 'fail');
+            setResult('gem-2-result', 'fail', `FAIL — CORS BLOCKED for model ${model}.\n\nError: ${msg}\nCheck DevTools Network tab.`);
+            results.gem2 = 'fail';
+            return;
+          }
+          // Network error on this model, try next
+          continue;
+        }
+      }
+
+      setStatus('gem-2-status', 'fail');
+      setResult('gem-2-result', 'fail', `FAIL — All model names returned 404. Tried: ${modelsToTry.join(', ')}\n\nCheck Gemini models list (Test 3) for available image-capable models.`);
+      results.gem2 = 'fail';
+    }
+
+    async function testGeminiWithImageRef(apiKey) {
+      setStatus('gem-3-status', 'running');
+
+      // Create a tiny 2x2 red PNG as a reference image
+      const tinyPng = 'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAADklEQVQIW2P4z8BQDwAEgAF/QualzQAAAABJRU5ErkJggg==';
+
+      const model = results.geminiModel || 'gemini-2.0-flash-exp-image-generation';
+
+      try {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+        const resp = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{
+              parts: [
+                { text: 'Using the attached image as a reference, generate a similar image but with a green color instead of red. Keep it small, 64x64 pixels.' },
+                { inlineData: { mimeType: 'image/png', data: tinyPng } },
+              ],
+            }],
+            generationConfig: {
+              responseModalities: ['TEXT', 'IMAGE'],
+            },
+          }),
+        });
+
+        const cors = corsHeaders(resp.headers);
+        const body = await resp.text();
+        let parsed;
+        try { parsed = JSON.parse(body); } catch { parsed = body; }
+
+        const hasImage = typeof parsed === 'object' && parsed.candidates?.[0]?.content?.parts?.some(p => p.inlineData);
+
+        const info = [
+          `Model: ${model}`,
+          `Status: ${resp.status} ${resp.statusText}`,
+          `CORS headers: ${JSON.stringify(cors, null, 2)}`,
+          `Response type: ${resp.type}`,
+          `Contains image data: ${hasImage}`,
+          `Body preview: ${JSON.stringify(parsed, null, 2).slice(0, 800)}`,
+        ].join('\n');
+
+        if (resp.ok && hasImage) {
+          setStatus('gem-3-status', 'pass');
+          setResult('gem-3-result', 'pass', `PASS — Gemini image gen with reference image works from browser.\n\n${info}`);
+          results.gem3 = 'pass';
+        } else if (resp.ok) {
+          setStatus('gem-3-status', 'pass');
+          setResult('gem-3-result', 'info', `PARTIAL — OK but no image in response.\n\n${info}`);
+          results.gem3 = 'partial';
+        } else {
+          setStatus('gem-3-status', 'fail');
+          setResult('gem-3-result', 'fail', `FAIL — HTTP ${resp.status}.\n\n${info}`);
+          results.gem3 = 'fail';
+        }
+      } catch (err) {
+        setStatus('gem-3-status', 'fail');
+        const msg = err.message || String(err);
+        setResult('gem-3-result', 'fail', `FAIL — ${msg}`);
+        results.gem3 = 'fail';
+      }
+    }
+
+    function renderSummary() {
+      const el = document.getElementById('summary');
+
+      const oaiPass = results.oai1 === 'pass';
+      const gemPass = results.gem1 === 'pass' && (results.gem2 === 'pass' || results.gem2 === 'partial');
+
+      let outcome, cls, detail;
+
+      if (oaiPass && gemPass) {
+        outcome = 'T1 — Both providers allow browser-origin calls';
+        cls = 't1';
+        detail = 'Proceed with the plan unchanged. No proxy needed.';
+      } else if (!oaiPass && gemPass) {
+        outcome = 'T2 — OpenAI blocks browser-origin, Gemini works';
+        cls = 't2';
+        detail = 'Recommended: thin Vercel Edge proxy for OpenAI only.\nCreate DD-024 documenting deviation from DD-001.\nGemini calls remain direct from browser.';
+      } else if (!oaiPass && !gemPass) {
+        outcome = 'T2+T3 — Both providers block browser-origin';
+        cls = 't3';
+        detail = 'Both providers need proxying. Consider:\n1. Thin Vercel Edge proxy for both (new DD-024)\n2. Desktop wrapper (Tauri/Electron)\n3. Re-evaluate architecture';
+      } else if (oaiPass && !gemPass) {
+        outcome = 'T3 — Gemini blocks browser-origin, OpenAI works';
+        cls = 't2';
+        detail = 'Drop Gemini in v1 OR add thin proxy for Gemini.\nWizard already supports OpenAI-only flow.';
+      }
+
+      el.innerHTML = `
+        <div class="summary ${cls}">
+          <strong>${outcome}</strong>
+          <pre style="margin-top: 0.75rem; font-size: 0.8125rem; white-space: pre-wrap;">${detail}</pre>
+          <details style="margin-top: 1rem;">
+            <summary>Raw results object</summary>
+            <pre style="margin-top: 0.5rem;">${JSON.stringify(results, null, 2)}</pre>
+          </details>
+        </div>
+      `;
+    }
+
+    async function runAll() {
+      const openaiKey = document.getElementById('openai-key').value.trim();
+      const geminiKey = document.getElementById('gemini-key').value.trim();
+      const btn = document.getElementById('run-all');
+      btn.disabled = true;
+      btn.textContent = 'Running...';
+
+      clearResults();
+
+      // Run OpenAI tests
+      if (openaiKey) {
+        await testOpenAIModels(openaiKey);
+        await testOpenAIImageGen(openaiKey);
+      } else {
+        setResult('oai-1-result', 'pending', 'Skipped — no OpenAI key provided.');
+        setResult('oai-2-result', 'pending', 'Skipped — no OpenAI key provided.');
+        results.oai1 = 'skip';
+        results.oai2 = 'skip';
+      }
+
+      // Run Gemini tests
+      if (geminiKey) {
+        await testGeminiModels(geminiKey);
+        await testGeminiGenerateText(geminiKey);
+        await testGeminiWithImageRef(geminiKey);
+      } else {
+        setResult('gem-1-result', 'pending', 'Skipped — no Gemini key provided.');
+        setResult('gem-2-result', 'pending', 'Skipped — no Gemini key provided.');
+        setResult('gem-3-result', 'pending', 'Skipped — no Gemini key provided.');
+        results.gem1 = 'skip';
+        results.gem2 = 'skip';
+        results.gem3 = 'skip';
+      }
+
+      renderSummary();
+      btn.disabled = false;
+      btn.textContent = 'Run All Tests';
+    }
+  </script>
+</body>
+</html>
