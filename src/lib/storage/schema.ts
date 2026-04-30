@@ -1,6 +1,7 @@
 import { monotonicFactory } from "ulid";
 import type {
   AspectRatioConfig,
+  ImageCount,
   Provider,
 } from "@/lib/providers/types";
 import type { NormalizedError } from "@/lib/providers/errors";
@@ -16,41 +17,41 @@ export const DB_VERSION = 1;
 export const STORAGE_KEY = "vucible:v1";
 
 export interface ImageMeta {
-  width?: number;
-  height?: number;
+  readonly width?: number;
+  readonly height?: number;
 }
 
 export type RoundResult =
   | {
-      status: "success";
-      bytes: ArrayBuffer;
-      thumbnail: ArrayBuffer;
-      mimeType: string;
-      meta: ImageMeta;
+      readonly status: "success";
+      readonly bytes: ArrayBuffer;
+      readonly thumbnail: ArrayBuffer;
+      readonly mimeType: string;
+      readonly meta: ImageMeta;
     }
-  | { status: "error"; error: NormalizedError };
+  | { readonly status: "error"; readonly error: NormalizedError };
 
 export interface Session {
-  id: string;
-  startedAt: string;
-  originalPrompt: string;
-  roundIds: string[];
+  readonly id: string;
+  readonly startedAt: string;
+  readonly originalPrompt: string;
+  readonly roundIds: readonly string[];
 }
 
 export interface Round {
-  id: string;
-  sessionId: string;
-  number: number;
-  promptSent: string;
-  modelsEnabled: { openai: boolean; gemini: boolean };
-  imageCount: 4 | 8 | 16;
-  aspect: AspectRatioConfig;
-  openaiResults: RoundResult[];
-  geminiResults: RoundResult[];
-  selections: { provider: Provider; index: number }[];
-  commentary: string | null;
-  startedAt: string;
-  settledAt: string | null;
+  readonly id: string;
+  readonly sessionId: string;
+  readonly number: number;
+  readonly promptSent: string;
+  readonly modelsEnabled: { readonly openai: boolean; readonly gemini: boolean };
+  readonly imageCount: ImageCount;
+  readonly aspect: AspectRatioConfig;
+  readonly openaiResults: readonly RoundResult[];
+  readonly geminiResults: readonly RoundResult[];
+  readonly selections: readonly { readonly provider: Provider; readonly index: number }[];
+  readonly commentary: string | null;
+  readonly startedAt: string;
+  readonly settledAt: string | null;
 }
 
 export type { VucibleStorageV1 } from "@/lib/providers/types";
