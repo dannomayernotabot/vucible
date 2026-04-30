@@ -6,15 +6,73 @@ import { ipmToTier } from "./tiers";
 // Browser calls our same-origin Edge proxy at /api/openai/v1/* (DD-024 pivot).
 // Server-side / Node test contexts can override via OPENAI_BASE_URL env var.
 const OPENAI_BASE = process.env.OPENAI_BASE_URL ?? "/api/openai/v1";
-const OPENAI_IMAGE_MODEL = "gpt-image-1";
+const DEFAULT_IMAGE_MODEL = "gpt-image-1";
 const TEST_PROMPT = "a single solid color square";
+
+const IMAGE_MODEL_RE = /^(gpt-image-|dall-e-|chatgpt-image-)/;
+
+function imageModelSortKey(id: string): string {
+  if (id.startsWith("gpt-image-")) return `0-${id}`;
+  if (id.startsWith("chatgpt-image-")) return `1-${id}`;
+  return `2-${id}`;
+}
+
+function reverseVersionSort(a: string, b: string): number {
+  const ka = imageModelSortKey(a);
+  const kb = imageModelSortKey(b);
+  const familyA = ka[0];
+  const familyB = kb[0];
+  if (familyA !== familyB) return familyA < familyB ? -1 : 1;
+  return b.localeCompare(a);
+}
+
+export async function listImageModels(
+  apiKey: string,
+  signal?: AbortSignal,
+): Promise<{ ok: true; models: string[] } | { ok: false; error: NormalizedError }> {
+  let response: Response;
+  try {
+    response = await fetch(`${OPENAI_BASE}/models`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal,
+    });
+  } catch (err) {
+    return { ok: false, error: mapNetworkError(err) };
+  }
+
+  if (!response.ok) {
+    return { ok: false, error: await mapResponseError(response) };
+  }
+
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    return { ok: false, error: { kind: "unknown", message: "Invalid JSON in models response" } };
+  }
+
+  const data = (body as { data?: { id: string }[] })?.data;
+  if (!Array.isArray(data)) {
+    return { ok: false, error: { kind: "unknown", message: "Unexpected models response shape" } };
+  }
+
+  const models = data
+    .map((m) => m.id)
+    .filter((id) => IMAGE_MODEL_RE.test(id))
+    .sort(reverseVersionSort);
+
+  return { ok: true, models };
+}
 
 export async function testGenerate(
   apiKey: string,
+  opts?: { model?: string },
 ): Promise<
   | { ok: true; tier: Tier; ipm: number }
   | { ok: false; error: NormalizedError }
 > {
+  const model = opts?.model ?? DEFAULT_IMAGE_MODEL;
   let response: Response;
   try {
     response = await fetch(`${OPENAI_BASE}/images/generations`, {
@@ -24,7 +82,7 @@ export async function testGenerate(
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: OPENAI_IMAGE_MODEL,
+        model,
         prompt: TEST_PROMPT,
         n: 1,
         size: "1024x1024",
@@ -53,6 +111,7 @@ export async function generate(
   args: {
     prompt: string;
     size: { width: number; height: number };
+    model?: string;
     referenceImages?: ReferenceImage[];
     signal?: AbortSignal;
   },
@@ -60,13 +119,14 @@ export async function generate(
   | { ok: true; image: ArrayBuffer; mimeType: string; meta: ImageMeta }
   | { ok: false; error: NormalizedError }
 > {
+  const model = args.model ?? DEFAULT_IMAGE_MODEL;
   const hasRefs = args.referenceImages && args.referenceImages.length > 0;
 
   let response: Response;
   try {
     if (hasRefs) {
       const form = new FormData();
-      form.append("model", OPENAI_IMAGE_MODEL);
+      form.append("model", model);
       form.append("prompt", args.prompt);
       form.append("n", "1");
       form.append("size", `${args.size.width}x${args.size.height}`);
@@ -87,7 +147,7 @@ export async function generate(
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          model: OPENAI_IMAGE_MODEL,
+          model,
           prompt: args.prompt,
           n: 1,
           size: `${args.size.width}x${args.size.height}`,

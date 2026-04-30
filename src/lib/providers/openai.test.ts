@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { http, HttpResponse } from "msw";
 import { server } from "../../../vitest.setup";
-import { testGenerate, generate } from "./openai";
+import { testGenerate, generate, listImageModels } from "./openai";
 import { PNG_1x1 } from "@/test/fixtures/images";
 import { JPEG_SAMPLE, WEBP_SAMPLE } from "@/test/fixtures/images";
 
@@ -406,5 +406,194 @@ describe("generate with reference images", () => {
     if (!result.ok) {
       expect(result.error.kind).toBe("auth_failed");
     }
+  });
+});
+
+describe("listImageModels", () => {
+  it("filters and sorts image models from mixed model list", async () => {
+    server.use(
+      http.get(`${OPENAI_BASE}/models`, () => {
+        return HttpResponse.json({
+          data: [
+            { id: "gpt-4o" },
+            { id: "gpt-image-1" },
+            { id: "dall-e-3" },
+            { id: "whisper-1" },
+            { id: "gpt-image-2-2026-04-21" },
+            { id: "chatgpt-image-latest" },
+            { id: "gpt-image-1.5" },
+            { id: "o1-preview" },
+            { id: "dall-e-2" },
+            { id: "gpt-image-2" },
+          ],
+        });
+      }),
+    );
+    const result = await listImageModels(API_KEY);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.models).toEqual([
+        "gpt-image-2-2026-04-21",
+        "gpt-image-2",
+        "gpt-image-1.5",
+        "gpt-image-1",
+        "chatgpt-image-latest",
+        "dall-e-3",
+        "dall-e-2",
+      ]);
+    }
+  });
+
+  it("filters out non-image model IDs", async () => {
+    server.use(
+      http.get(`${OPENAI_BASE}/models`, () => {
+        return HttpResponse.json({
+          data: [
+            { id: "gpt-4o" },
+            { id: "o1-preview" },
+            { id: "whisper-1" },
+            { id: "text-embedding-3-small" },
+          ],
+        });
+      }),
+    );
+    const result = await listImageModels(API_KEY);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.models).toEqual([]);
+    }
+  });
+
+  it("returns auth_failed on 401", async () => {
+    server.use(
+      http.get(`${OPENAI_BASE}/models`, () => {
+        return HttpResponse.json(
+          { error: { message: "Invalid API key" } },
+          { status: 401 },
+        );
+      }),
+    );
+    const result = await listImageModels(API_KEY);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.kind).toBe("auth_failed");
+    }
+  });
+
+  it("returns verification_required on 403 with verification message", async () => {
+    server.use(
+      http.get(`${OPENAI_BASE}/models`, () => {
+        return HttpResponse.json(
+          {
+            error: {
+              message:
+                "You must be verified to use the model `gpt-image-2`. Please visit https://platform.openai.com/settings/organization/general",
+            },
+          },
+          { status: 403 },
+        );
+      }),
+    );
+    const result = await listImageModels(API_KEY);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.kind).toBe("verification_required");
+      expect(result.error.model).toBe("gpt-image-2");
+    }
+  });
+
+  it("returns network_error on fetch failure", async () => {
+    server.use(
+      http.get(`${OPENAI_BASE}/models`, () => {
+        return HttpResponse.error();
+      }),
+    );
+    const result = await listImageModels(API_KEY);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.kind).toBe("network_error");
+    }
+  });
+});
+
+describe("testGenerate with model param", () => {
+  it("sends specified model in request body", async () => {
+    let capturedBody: unknown;
+    server.use(
+      http.post(`${OPENAI_BASE}/images/generations`, async ({ request }) => {
+        capturedBody = await request.json();
+        return HttpResponse.json(
+          { data: [{ b64_json: FAKE_B64_IMAGE }] },
+          { headers: { "x-ratelimit-limit-images": "20" } },
+        );
+      }),
+    );
+    await testGenerate(API_KEY, { model: "gpt-image-1.5" });
+    expect((capturedBody as Record<string, unknown>).model).toBe("gpt-image-1.5");
+  });
+
+  it("defaults to gpt-image-1 when no model specified", async () => {
+    let capturedBody: unknown;
+    server.use(
+      http.post(`${OPENAI_BASE}/images/generations`, async ({ request }) => {
+        capturedBody = await request.json();
+        return HttpResponse.json(
+          { data: [{ b64_json: FAKE_B64_IMAGE }] },
+          { headers: { "x-ratelimit-limit-images": "20" } },
+        );
+      }),
+    );
+    await testGenerate(API_KEY);
+    expect((capturedBody as Record<string, unknown>).model).toBe("gpt-image-1");
+  });
+});
+
+describe("generate with model param", () => {
+  it("sends model in JSON body", async () => {
+    let capturedBody: unknown;
+    server.use(
+      http.post(`${OPENAI_BASE}/images/generations`, async ({ request }) => {
+        capturedBody = await request.json();
+        return HttpResponse.json({ data: [{ b64_json: FAKE_B64_IMAGE }] });
+      }),
+    );
+    await generate(API_KEY, {
+      prompt: "test",
+      size: { width: 1024, height: 1024 },
+      model: "gpt-image-2",
+    });
+    expect((capturedBody as Record<string, unknown>).model).toBe("gpt-image-2");
+  });
+
+  it("sends model in FormData with reference images", async () => {
+    let capturedBody = "";
+    server.use(
+      http.post(`${OPENAI_BASE}/images/generations`, async ({ request }) => {
+        capturedBody = await request.text();
+        return HttpResponse.json({ data: [{ b64_json: FAKE_B64_IMAGE }] });
+      }),
+    );
+    await generate(API_KEY, {
+      prompt: "evolve",
+      size: { width: 1024, height: 1024 },
+      model: "gpt-image-2",
+      referenceImages: [{ bytes: PNG_1x1, mimeType: "image/png" }],
+    });
+    expect(capturedBody).toContain("gpt-image-2");
+  });
+
+  it("defaults to gpt-image-1 when model omitted", async () => {
+    let capturedBody: unknown;
+    server.use(
+      http.post(`${OPENAI_BASE}/images/generations`, async ({ request }) => {
+        capturedBody = await request.json();
+        return HttpResponse.json({ data: [{ b64_json: FAKE_B64_IMAGE }] });
+      }),
+    );
+    await generate(API_KEY, {
+      prompt: "test",
+      size: { width: 512, height: 512 },
+    });
+    expect((capturedBody as Record<string, unknown>).model).toBe("gpt-image-1");
   });
 });

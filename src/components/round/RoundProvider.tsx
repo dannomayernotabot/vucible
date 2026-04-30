@@ -21,6 +21,7 @@ import {
   type StartRoundInput,
   type SlotUpdate,
 } from "@/lib/round/orchestrate";
+import { getOpenaiModel } from "@/lib/storage/keys";
 
 export interface Selection {
   readonly provider: Provider;
@@ -158,12 +159,13 @@ export function RoundProvider({
     (input: StartRoundInput) => {
       const controller = new AbortController();
       abortRef.current = controller;
+      const openaiModel = getOpenaiModel();
 
       setSelections([]);
       setCommentary("");
       setConsecutive429({ openai: 0, gemini: 0 });
 
-      startRoundOne(input).then(({ round: r, sessionId: sid }) => {
+      startRoundOne({ ...input, openaiModel }).then(({ round: r, sessionId: sid }) => {
         setRound(r);
         setSessionId(sid);
 
@@ -172,6 +174,7 @@ export function RoundProvider({
           signal: controller.signal,
           throttles: throttlesRef.current,
           onSlotUpdate: handleSlotUpdate,
+          openaiModel,
         }).then((settled) => {
           setRound(settled);
           abortRef.current = null;
@@ -191,6 +194,7 @@ export function RoundProvider({
 
       const controller = new AbortController();
       abortRef.current = controller;
+      const openaiModel = getOpenaiModel();
 
       const currentSelections = [...selections];
       const currentCommentary = commentary || null;
@@ -207,6 +211,7 @@ export function RoundProvider({
         modelsEnabled: input.modelsEnabled,
         count: input.count,
         aspect: input.aspect,
+        openaiModel,
       }).then(({ round: newRound, openaiRefs, geminiRefs }) => {
         setRound(newRound);
 
@@ -217,6 +222,7 @@ export function RoundProvider({
           onSlotUpdate: handleSlotUpdate,
           openaiRefs,
           geminiRefs,
+          openaiModel,
         }).then((settled) => {
           setRound(settled);
           abortRef.current = null;
@@ -238,6 +244,7 @@ export function RoundProvider({
         signal: controller.signal,
         throttle: throttlesRef.current[provider],
         onSlotUpdate: handleSlotUpdate,
+        openaiModel: getOpenaiModel(),
       }).then((updated) => {
         setRound(updated);
       });

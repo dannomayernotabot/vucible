@@ -31,6 +31,7 @@ export interface StartRoundInput {
   readonly count: ImageCount;
   readonly aspect: AspectRatioConfig;
   readonly sessionId?: string;
+  readonly openaiModel?: string;
 }
 
 export interface StartRoundResult {
@@ -136,10 +137,11 @@ export interface FanOutOptions {
   onSlotUpdate: (update: SlotUpdate) => void;
   openaiRefs?: { bytes: ArrayBuffer; mimeType: string }[];
   geminiRefs?: { base64: string; mimeType: string }[];
+  openaiModel?: string;
 }
 
 export async function fanOut(opts: FanOutOptions): Promise<Round> {
-  const { round, signal, throttles, onSlotUpdate, openaiRefs, geminiRefs } = opts;
+  const { round, signal, throttles, onSlotUpdate, openaiRefs, geminiRefs, openaiModel } = opts;
   const storage = getStorage();
   if (!storage) throw new Error("No storage available.");
 
@@ -164,6 +166,7 @@ export async function fanOut(opts: FanOutOptions): Promise<Round> {
             const r = await openaiGenerate(openaiKey, {
               prompt: round.promptSent,
               size: openaiSize,
+              model: openaiModel,
               referenceImages: openaiRefs,
               signal: sig,
             });
@@ -300,6 +303,7 @@ export interface StartRoundNInput {
   readonly modelsEnabled: { readonly openai: boolean; readonly gemini: boolean };
   readonly count: ImageCount;
   readonly aspect: AspectRatioConfig;
+  readonly openaiModel?: string;
 }
 
 export interface StartRoundNResult {
@@ -397,10 +401,11 @@ export interface RegenerateSlotOptions {
   signal: AbortSignal;
   throttle?: ProviderThrottle;
   onSlotUpdate: (update: SlotUpdate) => void;
+  openaiModel?: string;
 }
 
 export async function regenerateSlot(opts: RegenerateSlotOptions): Promise<Round> {
-  const { round, provider, index, signal, throttle, onSlotUpdate } = opts;
+  const { round, provider, index, signal, throttle, onSlotUpdate, openaiModel } = opts;
   const storage = getStorage();
   if (!storage) throw new Error("No storage available.");
 
@@ -419,6 +424,7 @@ export async function regenerateSlot(opts: RegenerateSlotOptions): Promise<Round
           const r = await openaiGenerate(key, {
             prompt: round.promptSent,
             size: openaiSize,
+            model: openaiModel,
             signal: sig,
           });
           if (!r.ok) throw r.error;

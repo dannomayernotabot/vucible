@@ -308,4 +308,52 @@ describe("fanOut", () => {
     expect(stored!.settledAt).not.toBeNull();
     expect(stored!.openaiResults.every((r) => r.status === "success")).toBe(true);
   });
+
+  it("passes openaiModel to generate calls", async () => {
+    mockOpenaiGenerate.mockResolvedValue(successResult());
+
+    const { round } = await startRoundOne({
+      prompt: "model test",
+      modelsEnabled: { openai: true, gemini: false },
+      count: 4,
+      aspect: { kind: "discrete", ratio: "1:1" },
+      openaiModel: "gpt-image-1.5",
+    });
+
+    await fanOut({
+      round,
+      signal: new AbortController().signal,
+      throttles: { openai: new ProviderThrottle(20) },
+      onSlotUpdate: () => {},
+      openaiModel: "gpt-image-1.5",
+    });
+
+    expect(mockOpenaiGenerate).toHaveBeenCalled();
+    for (const call of mockOpenaiGenerate.mock.calls) {
+      expect(call[1].model).toBe("gpt-image-1.5");
+    }
+  });
+
+  it("omits model (undefined) when no openaiModel specified", async () => {
+    mockOpenaiGenerate.mockResolvedValue(successResult());
+
+    const { round } = await startRoundOne({
+      prompt: "default model test",
+      modelsEnabled: { openai: true, gemini: false },
+      count: 4,
+      aspect: { kind: "discrete", ratio: "1:1" },
+    });
+
+    await fanOut({
+      round,
+      signal: new AbortController().signal,
+      throttles: { openai: new ProviderThrottle(20) },
+      onSlotUpdate: () => {},
+    });
+
+    expect(mockOpenaiGenerate).toHaveBeenCalled();
+    for (const call of mockOpenaiGenerate.mock.calls) {
+      expect(call[1].model).toBeUndefined();
+    }
+  });
 });
