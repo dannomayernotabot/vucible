@@ -1,132 +1,126 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   wizardReducer,
   initialState,
   type WizardState,
   type WizardAction,
 } from "./machine";
+import type { WizardProgress } from "@/lib/storage/wizard-progress";
 
 function reduce(state: WizardState, ...actions: WizardAction[]): WizardState {
   return actions.reduce(wizardReducer, state);
 }
 
 describe("wizardReducer", () => {
+  describe("initialState", () => {
+    it("returns defaults when progress is null", () => {
+      const s = initialState(null);
+      expect(s).toEqual({
+        step: 1,
+        draftProviders: {},
+        draftDefaults: {},
+        completed: false,
+      });
+    });
+
+    it("restores from WizardProgress", () => {
+      const progress: WizardProgress = {
+        step: 3,
+        draftProviders: {
+          openai: {
+            apiKey: "sk-saved",
+            tier: "tier2",
+            ipm: 20,
+            validatedAt: "2025-01-01T00:00:00.000Z",
+          },
+        },
+        draftDefaults: { imageCount: 8 },
+      };
+      const s = initialState(progress);
+      expect(s.step).toBe(3);
+      expect(s.draftProviders.openai?.apiKey).toBe("sk-saved");
+      expect(s.draftProviders.openai?.tier).toBe("tier2");
+      expect(s.draftDefaults).toEqual({ imageCount: 8 });
+      expect(s.completed).toBe(false);
+    });
+
+    it("defaults draftDefaults to {} when progress omits it", () => {
+      const progress: WizardProgress = {
+        step: 2,
+        draftProviders: {},
+      };
+      const s = initialState(progress);
+      expect(s.draftDefaults).toEqual({});
+    });
+  });
+
   describe("set-step", () => {
     it("transitions to the target step", () => {
-      const s = reduce(initialState(), { type: "set-step", step: 3 });
+      const s = reduce(initialState(null), { type: "set-step", step: 3 });
       expect(s.step).toBe(3);
     });
 
-    it("is idempotent", () => {
-      const s1 = reduce(initialState(), { type: "set-step", step: 2 });
+    it("is idempotent for same step", () => {
+      const s1 = reduce(initialState(null), { type: "set-step", step: 2 });
       const s2 = reduce(s1, { type: "set-step", step: 2 });
-      expect(s2).toEqual(s1);
+      expect(s2.step).toBe(s1.step);
     });
   });
 
   describe("set-draft-key", () => {
-    it("sets provider to editing with apiKey", () => {
-      const s = reduce(initialState(), {
-        type: "set-draft-key",
-        provider: "openai",
-        apiKey: "sk-test",
-      });
-      expect(s.providers.openai).toEqual({
-        phase: "editing",
-        apiKey: "sk-test",
-      });
-    });
+    it("sets apiKey and clears previous validation fields", () => {
+      const withValidation = reduce(
+        initialState(null),
+        { type: "set-draft-key", provider: "openai", apiKey: "sk-old" },
+        { type: "validate-start", provider: "openai" },
+        {
+          type: "validate-success",
+          provider: "openai",
+          tier: "tier2",
+          ipm: 20,
+        },
+      );
+      expect(withValidation.draftProviders.openai?.tier).toBe("tier2");
 
-    it("rejects when provider is validating", () => {
-      const editing = reduce(initialState(), {
-        type: "set-draft-key",
-        provider: "openai",
-        apiKey: "sk-test",
-      });
-      const validating = reduce(editing, {
-        type: "validate-start",
-        provider: "openai",
-      });
-      const attempted = reduce(validating, {
+      const reset = reduce(withValidation, {
         type: "set-draft-key",
         provider: "openai",
         apiKey: "sk-new",
       });
-      expect(attempted).toBe(validating);
+      expect(reset.draftProviders.openai?.apiKey).toBe("sk-new");
+      expect(reset.draftProviders.openai?.tier).toBeUndefined();
+      expect(reset.draftProviders.openai?.ipm).toBeUndefined();
+      expect(reset.draftProviders.openai?.validatedAt).toBeUndefined();
+      expect(reset.draftProviders.openai?.error).toBeUndefined();
     });
 
-    it("does not affect other provider", () => {
-      const s = reduce(initialState(), {
+    it("does not affect other providers", () => {
+      const s = reduce(initialState(null), {
         type: "set-draft-key",
         provider: "openai",
         apiKey: "sk-test",
       });
-      expect(s.providers.gemini).toEqual({ phase: "idle" });
+      expect(s.draftProviders.gemini).toBeUndefined();
     });
   });
 
-  describe("validate-start", () => {
-    it("transitions editing to validating", () => {
+  describe("validate-start / validate-success / validate-error flow", () => {
+    it("sets validating flag on validate-start", () => {
       const s = reduce(
-        initialState(),
+        initialState(null),
         { type: "set-draft-key", provider: "openai", apiKey: "sk-test" },
         { type: "validate-start", provider: "openai" },
       );
-      expect(s.providers.openai).toEqual({
-        phase: "validating",
-        apiKey: "sk-test",
-      });
+      expect(s.draftProviders.openai?.validating).toBe(true);
+      expect(s.draftProviders.openai?.error).toBeUndefined();
     });
 
-    it("rejects double-click (already validating)", () => {
-      const validating = reduce(
-        initialState(),
-        { type: "set-draft-key", provider: "openai", apiKey: "sk-test" },
-        { type: "validate-start", provider: "openai" },
-      );
-      const again = reduce(validating, {
-        type: "validate-start",
-        provider: "openai",
-      });
-      expect(again).toBe(validating);
-    });
+    it("clears validating and sets tier/ipm/validatedAt on validate-success", () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2025-06-15T12:00:00.000Z"));
 
-    it("rejects from idle state", () => {
-      const init = initialState();
-      const s = reduce(init, {
-        type: "validate-start",
-        provider: "openai",
-      });
-      expect(s).toBe(init);
-    });
-
-    it("allows re-validation from error state", () => {
-      const errState = reduce(
-        initialState(),
-        { type: "set-draft-key", provider: "gemini", apiKey: "ai-test" },
-        { type: "validate-start", provider: "gemini" },
-        {
-          type: "validate-error",
-          provider: "gemini",
-          error: { kind: "auth_failed", message: "bad key" },
-        },
-      );
-      expect(errState.providers.gemini.phase).toBe("error");
-      const retrying = reduce(errState, {
-        type: "validate-start",
-        provider: "gemini",
-      });
-      expect(retrying.providers.gemini).toEqual({
-        phase: "validating",
-        apiKey: "ai-test",
-      });
-    });
-  });
-
-  describe("validate-success", () => {
-    it("transitions validating to validated with tier and ipm", () => {
       const s = reduce(
-        initialState(),
+        initialState(null),
         { type: "set-draft-key", provider: "openai", apiKey: "sk-test" },
         { type: "validate-start", provider: "openai" },
         {
@@ -136,131 +130,118 @@ describe("wizardReducer", () => {
           ipm: 20,
         },
       );
-      expect(s.providers.openai).toEqual({
-        phase: "validated",
-        apiKey: "sk-test",
-        tier: "tier2",
-        ipm: 20,
-      });
+      const entry = s.draftProviders.openai;
+      expect(entry?.validating).toBe(false);
+      expect(entry?.tier).toBe("tier2");
+      expect(entry?.ipm).toBe(20);
+      expect(entry?.validatedAt).toBe("2025-06-15T12:00:00.000Z");
+      expect(entry?.error).toBeUndefined();
+
+      vi.useRealTimers();
     });
 
-    it("rejects when not validating", () => {
-      const s = reduce(initialState(), {
-        type: "validate-success",
-        provider: "openai",
-        tier: "tier1",
-        ipm: 5,
-      });
-      expect(s.providers.openai.phase).toBe("idle");
-    });
-  });
-
-  describe("validate-error", () => {
-    it("transitions validating to error with NormalizedError", () => {
+    it("clears validating and sets error on validate-error", () => {
+      const err = { kind: "auth_failed" as const, message: "Invalid API key" };
       const s = reduce(
-        initialState(),
+        initialState(null),
         { type: "set-draft-key", provider: "openai", apiKey: "sk-bad" },
         { type: "validate-start", provider: "openai" },
-        {
-          type: "validate-error",
-          provider: "openai",
-          error: { kind: "auth_failed", message: "Invalid API key" },
-        },
+        { type: "validate-error", provider: "openai", error: err },
       );
-      expect(s.providers.openai).toEqual({
-        phase: "error",
-        apiKey: "sk-bad",
-        error: { kind: "auth_failed", message: "Invalid API key" },
-      });
-    });
-
-    it("rejects when not validating", () => {
-      const s = reduce(initialState(), {
-        type: "validate-error",
-        provider: "openai",
-        error: { kind: "unknown", message: "err" },
-      });
-      expect(s.providers.openai.phase).toBe("idle");
+      const entry = s.draftProviders.openai;
+      expect(entry?.validating).toBe(false);
+      expect(entry?.error).toEqual(err);
     });
   });
 
-  describe("set-gemini-tier", () => {
-    it("overrides tier on validated gemini", () => {
-      const validated = reduce(
-        initialState(),
-        { type: "set-draft-key", provider: "gemini", apiKey: "ai-test" },
-        { type: "validate-start", provider: "gemini" },
-        { type: "validate-success", provider: "gemini", tier: "tier1", ipm: 5 },
-      );
-      const updated = reduce(validated, {
-        type: "set-gemini-tier",
-        tier: "tier3",
+  describe("set-gemini-mode", () => {
+    it("enables gemini by adding an empty entry when none exists", () => {
+      const s = reduce(initialState(null), {
+        type: "set-gemini-mode",
+        enabled: true,
       });
-      const gemini = updated.providers.gemini;
-      expect(gemini.phase).toBe("validated");
-      if (gemini.phase === "validated") {
-        expect(gemini.tier).toBe("tier3");
-      }
+      expect(s.draftProviders.gemini).toEqual({});
     });
 
-    it("rejects when gemini is not validated", () => {
-      const s = reduce(initialState(), {
-        type: "set-gemini-tier",
-        tier: "tier2",
+    it("preserves existing gemini entry when enabling", () => {
+      const withGemini = reduce(initialState(null), {
+        type: "set-draft-key",
+        provider: "gemini",
+        apiKey: "ai-test",
       });
-      expect(s.providers.gemini.phase).toBe("idle");
+      const s = reduce(withGemini, {
+        type: "set-gemini-mode",
+        enabled: true,
+      });
+      expect(s.draftProviders.gemini?.apiKey).toBe("ai-test");
+    });
+
+    it("removes gemini entry when disabling", () => {
+      const withGemini = reduce(
+        initialState(null),
+        { type: "set-draft-key", provider: "gemini", apiKey: "ai-test" },
+        { type: "set-gemini-mode", enabled: false },
+      );
+      expect(withGemini.draftProviders.gemini).toBeUndefined();
+      expect("gemini" in withGemini.draftProviders).toBe(false);
+    });
+  });
+
+  describe("set-defaults", () => {
+    it("merges partial defaults into draftDefaults", () => {
+      const s = reduce(
+        initialState(null),
+        { type: "set-defaults", defaults: { imageCount: 16 } },
+        { type: "set-defaults", defaults: { theme: "dark" } },
+      );
+      expect(s.draftDefaults).toEqual({ imageCount: 16, theme: "dark" });
+    });
+
+    it("overwrites existing fields", () => {
+      const s = reduce(
+        initialState(null),
+        { type: "set-defaults", defaults: { imageCount: 8 } },
+        { type: "set-defaults", defaults: { imageCount: 16 } },
+      );
+      expect(s.draftDefaults.imageCount).toBe(16);
     });
   });
 
   describe("clear-provider", () => {
-    it("resets provider to idle", () => {
+    it("removes the provider entry entirely", () => {
       const s = reduce(
-        initialState(),
+        initialState(null),
         { type: "set-draft-key", provider: "openai", apiKey: "sk-test" },
-        { type: "validate-start", provider: "openai" },
-        {
-          type: "validate-success",
-          provider: "openai",
-          tier: "tier1",
-          ipm: 5,
-        },
         { type: "clear-provider", provider: "openai" },
       );
-      expect(s.providers.openai).toEqual({ phase: "idle" });
+      expect(s.draftProviders.openai).toBeUndefined();
+      expect("openai" in s.draftProviders).toBe(false);
     });
-  });
 
-  describe("set-image-count", () => {
-    it("sets image count", () => {
-      const s = reduce(initialState(), {
-        type: "set-image-count",
-        count: 16,
+    it("is a no-op for a provider that does not exist", () => {
+      const s = initialState(null);
+      const cleared = reduce(s, {
+        type: "clear-provider",
+        provider: "gemini",
       });
-      expect(s.imageCount).toBe(16);
-    });
-  });
-
-  describe("set-aspect", () => {
-    it("sets aspect ratio", () => {
-      const s = reduce(initialState(), {
-        type: "set-aspect",
-        aspect: { kind: "discrete", ratio: "16:9" },
-      });
-      expect(s.aspectRatio).toEqual({ kind: "discrete", ratio: "16:9" });
+      expect(cleared.draftProviders).toEqual({});
     });
   });
 
   describe("complete", () => {
-    it("returns state unchanged", () => {
-      const s = initialState();
-      expect(reduce(s, { type: "complete" })).toBe(s);
+    it("sets the completed flag to true", () => {
+      const s = reduce(initialState(null), { type: "complete" });
+      expect(s.completed).toBe(true);
     });
   });
 
   describe("full happy path", () => {
-    it("walks through all steps and validates both providers", () => {
+    it("walks through all steps, validates, sets defaults, and completes", () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2025-06-15T12:00:00.000Z"));
+
       const final = reduce(
-        initialState(),
+        initialState(null),
         { type: "set-step", step: 2 },
         { type: "set-draft-key", provider: "openai", apiKey: "sk-live" },
         { type: "validate-start", provider: "openai" },
@@ -270,6 +251,7 @@ describe("wizardReducer", () => {
           tier: "tier2",
           ipm: 20,
         },
+        { type: "set-gemini-mode", enabled: true },
         { type: "set-draft-key", provider: "gemini", apiKey: "ai-live" },
         { type: "validate-start", provider: "gemini" },
         {
@@ -279,16 +261,28 @@ describe("wizardReducer", () => {
           ipm: 5,
         },
         { type: "set-step", step: 3 },
-        { type: "set-image-count", count: 8 },
-        { type: "set-aspect", aspect: { kind: "discrete", ratio: "16:9" } },
+        { type: "set-defaults", defaults: { imageCount: 8 } },
+        {
+          type: "set-defaults",
+          defaults: {
+            aspectRatio: { kind: "discrete", ratio: "16:9" },
+          },
+        },
         { type: "set-step", step: 4 },
         { type: "complete" },
       );
+
       expect(final.step).toBe(4);
-      expect(final.providers.openai.phase).toBe("validated");
-      expect(final.providers.gemini.phase).toBe("validated");
-      expect(final.imageCount).toBe(8);
-      expect(final.aspectRatio).toEqual({ kind: "discrete", ratio: "16:9" });
+      expect(final.completed).toBe(true);
+      expect(final.draftProviders.openai?.tier).toBe("tier2");
+      expect(final.draftProviders.openai?.ipm).toBe(20);
+      expect(final.draftProviders.gemini?.tier).toBe("tier1");
+      expect(final.draftDefaults).toEqual({
+        imageCount: 8,
+        aspectRatio: { kind: "discrete", ratio: "16:9" },
+      });
+
+      vi.useRealTimers();
     });
   });
 });
