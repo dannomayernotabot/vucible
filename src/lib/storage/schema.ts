@@ -29,7 +29,8 @@ export type RoundResult =
       readonly mimeType: string;
       readonly meta: ImageMeta;
     }
-  | { readonly status: "error"; readonly error: NormalizedError };
+  | { readonly status: "error"; readonly error: NormalizedError }
+  | { readonly status: "loading" };
 
 export interface Session {
   readonly id: string;

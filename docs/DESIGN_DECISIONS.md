@@ -430,3 +430,17 @@ Default in wizard / settings: **1:1 (square)** — works on both providers, neut
 **Why.** "Mirror underlying functionality as much as possible" (user direction). Constraining the UI to provider capabilities prevents silent mismatches and gives power users full flexibility when they're using the unconstrained model. Per-round colocation with the model toggle reflects that they interact.
 
 **Consequences.** UI must dynamically reshape based on the model toggle — small but real complexity. Snap-on-re-enable behavior needs clear UX to avoid surprising users. The cards-share-aspect simplification means we don't need masonry; a fixed grid suffices. DD-011 partially superseded (aspect specifically is now a UI control); rest of DD-011 stands.
+
+---
+
+## DD-024: Private-browsing mode — detect and warn (option b)
+
+**Date:** 2026-04-29 · **Status:** Accepted
+
+**Context.** Private/incognito mode restricts storage: Safari caps localStorage to ~7 days, Firefox wipes IndexedDB on close. Three options: (a) silently best-effort, (b) detect and show non-blocking banner, (c) block wizard until normal tab opened. Ref: §9.5, §14.S.
+
+**Decision.** Option (b). Detect private browsing via storage probes, show a non-blocking warning banner on wizard step 1 and AppShell mount. Detection: attempt a synthetic `localStorage.setItem`; if `QuotaExceededError`, likely Safari private. Attempt `indexedDB.open`; if `InvalidStateError`, likely Firefox private.
+
+**Why.** Option (a) would silently lose keys on tab close in some browsers — confusing for a BYOK app where key entry is the primary setup cost. Option (c) is too aggressive — the app still works within a single session in private mode, and blocking users from even trying is hostile. A banner educates without blocking.
+
+**Consequences.** Small false-positive risk on devices with genuinely full storage (mitigated by using a tiny synthetic key). Banner component needs to be slotted into wizard step 1 and AppShell mount. No runtime cost if detection passes (single probe on mount).
