@@ -58,22 +58,21 @@ If that audit trail is missing, then you must act as if the operation never happ
 
 ## Project Architecture
 
-<!-- CUSTOMIZE: Describe your project's architecture here -->
+Browser-only BYOK image-prompt evolution tool. Next.js 16 (App Router) + React 19 + shadcn/ui + Tailwind CSS 4. Static export (`output: "export"`) — no server at runtime. All API calls go directly from browser to OpenAI/Gemini.
 
 ### Components
 
-<!-- CUSTOMIZE: List your project's main components/domains -->
-
-Example structure:
-- **A) Backend API** — Framework, database, main responsibilities
-- **B) Frontend** — Framework, UI library, key patterns
-- **C) Shared** — Common utilities, types, constants
+- **A) Wizard** (`components/wizard/`, `lib/wizard/`) — 4-step setup: key validation, tier detection, defaults selection. State machine in `lib/wizard/machine.ts`.
+- **B) App Shell** (`components/shell/`) — TopBar, ThemeProvider, history rail toggle, ScrollBackPanel for viewing past rounds.
+- **C) Round Engine** (`lib/round/`, `components/round/`) — `RoundProvider` context, `orchestrate.ts` (startRoundOne/startRoundN/fanOut), `ProviderThrottle` (per-provider concurrency), `withRetry` (429 backoff), `ImageCache`/`ThumbnailCache` (refcounted LRU with object URL lifecycle).
+- **D) Providers** (`lib/providers/`) — OpenAI (`gpt-image-1`) and Gemini (`v1beta`) API clients. `NormalizedError` + `errorToMessage` for uniform error display.
+- **E) Grid + Selection** (`components/grid/`) — `ResultGrid`, `ModelSection`, `ImageCardSuccess`/`Error`/`Loading`, `SelectionOverlay` (checkbox ARIA), `ImageZoom`.
+- **F) Storage** (`lib/storage/`) — `localStorage` (`keys.ts`: `vucible:v1`), IndexedDB (`history.ts`: sessions + rounds via idb), `purge.ts` (clear all), `cross-tab.ts` (storage event + BroadcastChannel).
+- **G) Settings** (`components/settings/`) — KeysPanel, DefaultsPanel, ConcurrencyPanel, HistoryPanel. Auto-save on blur/click with QuotaExceeded revert.
 
 ---
 
 ## Repo Layout
-
-<!-- CUSTOMIZE: Document your actual directory structure -->
 
 ```
 vucible/
@@ -81,15 +80,44 @@ vucible/
 ├── AGENTS.md
 ├── .beads/                        # Issue tracking (br)
 ├── .claude/                       # Claude Code settings
+├── next.config.ts                 # output: "export", images.unoptimized
+├── vitest.config.ts               # jsdom, fake-indexeddb, msw
+├── vitest.setup.ts                # localStorage polyfill, matchMedia stub
 │
-└── src/                           # Your source code
+└── src/
+    ├── app/                       # Next.js App Router (page.tsx, layout.tsx, globals.css)
+    │   └── _components/           # WizardOrApp gate
+    ├── components/
+    │   ├── wizard/                # WizardShell, StepIntro/Keys/Defaults/Confirm
+    │   ├── shell/                 # AppShell, TopBar, ThemeProvider
+    │   ├── round/                 # RoundProvider, PromptArea, CommentaryInput
+    │   ├── grid/                  # ResultGrid, ImageCard*, SelectionOverlay, ImageZoom
+    │   ├── history/               # HistoryRail, RoundCard, SessionsList, ScrollBackPanel
+    │   ├── settings/              # SettingsDialog + 4 panels
+    │   ├── feedback/              # Error boundaries (Root, Round, History), RateLimitBanner
+    │   └── ui/                    # shadcn/ui primitives
+    ├── lib/
+    │   ├── providers/             # openai.ts, gemini.ts, errors.ts, types.ts
+    │   ├── round/                 # orchestrate, throttle, image-cache, retry, thumbnails
+    │   ├── storage/               # keys.ts, history.ts (IDB), purge.ts, cross-tab.ts, schema.ts
+    │   └── wizard/                # machine.ts (state reducer)
+    └── __tests__/                 # full-flow E2E tests
 ```
 
 ---
 
-## Generated Files — NEVER Edit Manually
+## Vucible-specific conventions
 
-<!-- CUSTOMIZE: If you have generated files, document them here -->
+- Never log API keys. `lib/log.ts` has a trauma-guard that strips key-like strings.
+- Aspect ratio invariant: Gemini requires one of 14 discrete ratios. `snapAspectIfNeeded()` enforces this at the orchestrate layer. Three-way coverage: provider types, orchestrate, and DefaultsPanel.
+- MIME types must be preserved on multipart image parts — do not default to `image/png`.
+- All provider errors flow through `NormalizedError` (8 kinds) and `errorToMessage()` for user-facing copy.
+- `ImageCache` / `ThumbnailCache` are refcounted LRU caches that manage `URL.createObjectURL` lifecycle. Always call `release()` on unmount.
+- Error boundaries: Root (full-page refresh) → Round (grid area) → History (sidebar). Each has `role="alert"`.
+
+---
+
+## Generated Files — NEVER Edit Manually
 
 **Current state:** There are no generated files in this repo.
 
