@@ -3,14 +3,18 @@ import { cleanup, render, screen, fireEvent } from "@testing-library/react";
 import { ImageCard } from "./ImageCard";
 import { ImageCardLoading } from "./ImageCardLoading";
 import { ImageCardError } from "./ImageCardError";
+import { ImageCardSuccess } from "./ImageCardSuccess";
 import { ModelSection } from "./ModelSection";
 import type { RoundResult } from "@/lib/storage/schema";
 import type { NormalizedError } from "@/lib/providers/errors";
 
+const mockGet = vi.fn(() => "blob:test-url");
+const mockRelease = vi.fn();
+
 vi.mock("@/lib/round/image-cache", () => ({
   imageCache: {
-    get: vi.fn(() => "blob:test-url"),
-    release: vi.fn(),
+    get: (...args: unknown[]) => mockGet(...args),
+    release: (...args: unknown[]) => mockRelease(...args),
   },
 }));
 
@@ -24,7 +28,11 @@ vi.mock("@/lib/round/failures", async () => {
   };
 });
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  mockGet.mockClear();
+  mockRelease.mockClear();
+});
 
 describe("ImageCardLoading", () => {
   it("renders shimmer placeholder with loading role", () => {
@@ -128,5 +136,50 @@ describe("ModelSection", () => {
       <ModelSection roundId="r1" provider="gemini" results={results} />,
     );
     expect(screen.getAllByRole("status")).toHaveLength(3);
+  });
+});
+
+describe("ImageCardSuccess refcount lifecycle", () => {
+  it("calls cache.get on mount and cache.release on unmount", () => {
+    const { unmount } = render(
+      <ImageCardSuccess
+        roundId="r1"
+        slotKey="r1:openai:0"
+        bytes={new ArrayBuffer(10)}
+        mimeType="image/png"
+      />,
+    );
+
+    expect(mockGet).toHaveBeenCalledWith("r1", "r1:openai:0", expect.any(ArrayBuffer), "image/png");
+
+    unmount();
+
+    expect(mockRelease).toHaveBeenCalledWith("r1", "r1:openai:0");
+  });
+
+  it("does not leak refcounts across re-renders with same props", () => {
+    const bytes = new ArrayBuffer(10);
+    const { rerender, unmount } = render(
+      <ImageCardSuccess
+        roundId="r1"
+        slotKey="r1:openai:0"
+        bytes={bytes}
+        mimeType="image/png"
+      />,
+    );
+
+    rerender(
+      <ImageCardSuccess
+        roundId="r1"
+        slotKey="r1:openai:0"
+        bytes={bytes}
+        mimeType="image/png"
+      />,
+    );
+
+    expect(mockGet).toHaveBeenCalledTimes(1);
+
+    unmount();
+    expect(mockRelease).toHaveBeenCalledTimes(1);
   });
 });

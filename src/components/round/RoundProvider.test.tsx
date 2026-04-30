@@ -1,10 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, act } from "@testing-library/react";
 import { RoundProvider, useRound } from "./RoundProvider";
+import type { SlotUpdate } from "@/lib/round/orchestrate";
+import type { Round, RoundResult } from "@/lib/storage/schema";
+
+const mockStartRoundOne = vi.fn();
+const mockFanOut = vi.fn();
 
 vi.mock("@/lib/round/orchestrate", () => ({
-  startRoundOne: vi.fn(),
-  fanOut: vi.fn(),
+  startRoundOne: (...args: unknown[]) => mockStartRoundOne(...args),
+  fanOut: (...args: unknown[]) => mockFanOut(...args),
 }));
 
 vi.mock("@/lib/round/throttle", () => {
@@ -24,7 +29,11 @@ vi.mock("@/lib/round/throttle", () => {
   return { ProviderThrottle: MockThrottle };
 });
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  mockStartRoundOne.mockReset();
+  mockFanOut.mockReset();
+});
 
 function Consumer() {
   const ctx = useRound();
@@ -39,6 +48,25 @@ function Consumer() {
       <span data-testid="round">{ctx.round ? "yes" : "no"}</span>
     </div>
   );
+}
+
+function makeLoadingRound(openaiCount: number, geminiCount: number): Round {
+  const loading: RoundResult = { status: "loading" };
+  return {
+    id: "test-round",
+    sessionId: "test-session",
+    number: 1,
+    promptSent: "test",
+    modelsEnabled: { openai: openaiCount > 0, gemini: geminiCount > 0 },
+    imageCount: (openaiCount + geminiCount) as 4 | 8 | 16,
+    aspect: { kind: "discrete", ratio: "1:1" },
+    openaiResults: Array.from({ length: openaiCount }, () => loading),
+    geminiResults: Array.from({ length: geminiCount }, () => loading),
+    selections: [],
+    commentary: null,
+    startedAt: new Date().toISOString(),
+    settledAt: null,
+  };
 }
 
 describe("RoundProvider", () => {
@@ -63,5 +91,189 @@ describe("RoundProvider", () => {
       "useRound must be used within RoundProvider",
     );
     spy.mockRestore();
+  });
+});
+
+describe("RoundProvider 429 tracking", () => {
+  it("increments consecutive429Count on rate_limited settle", async () => {
+    const round = makeLoadingRound(2, 0);
+    let capturedOnSlotUpdate: ((u: SlotUpdate) => void) | null = null;
+
+    mockStartRoundOne.mockResolvedValue({ round, sessionId: "s1" });
+    mockFanOut.mockImplementation(async (opts: { onSlotUpdate: (u: SlotUpdate) => void }) => {
+      capturedOnSlotUpdate = opts.onSlotUpdate;
+      return { ...round, settledAt: new Date().toISOString() };
+    });
+
+    let triggerStart: (() => void) | null = null;
+    function StartConsumer() {
+      const ctx = useRound();
+      triggerStart = () =>
+        ctx.startRound({
+          prompt: "test",
+          modelsEnabled: { openai: true, gemini: false },
+          count: 4,
+          aspect: { kind: "discrete", ratio: "1:1" },
+        });
+      return (
+        <span data-testid="c429-openai">{ctx.consecutive429Count.openai}</span>
+      );
+    }
+
+    render(
+      <RoundProvider>
+        <StartConsumer />
+      </RoundProvider>,
+    );
+
+    expect(screen.getByTestId("c429-openai").textContent).toBe("0");
+
+    await act(async () => {
+      triggerStart!();
+    });
+
+    await act(async () => {
+      capturedOnSlotUpdate!({
+        provider: "openai",
+        index: 0,
+        result: {
+          status: "error",
+          error: { kind: "rate_limited", message: "Too fast" },
+        },
+      });
+    });
+
+    expect(screen.getByTestId("c429-openai").textContent).toBe("1");
+
+    await act(async () => {
+      capturedOnSlotUpdate!({
+        provider: "openai",
+        index: 1,
+        result: {
+          status: "error",
+          error: { kind: "rate_limited", message: "Too fast" },
+        },
+      });
+    });
+
+    expect(screen.getByTestId("c429-openai").textContent).toBe("2");
+  });
+
+  it("resets consecutive429Count on non-429 settle", async () => {
+    const round = makeLoadingRound(2, 0);
+    let capturedOnSlotUpdate: ((u: SlotUpdate) => void) | null = null;
+
+    mockStartRoundOne.mockResolvedValue({ round, sessionId: "s1" });
+    mockFanOut.mockImplementation(async (opts: { onSlotUpdate: (u: SlotUpdate) => void }) => {
+      capturedOnSlotUpdate = opts.onSlotUpdate;
+      return { ...round, settledAt: new Date().toISOString() };
+    });
+
+    let triggerStart: (() => void) | null = null;
+    function StartConsumer() {
+      const ctx = useRound();
+      triggerStart = () =>
+        ctx.startRound({
+          prompt: "test",
+          modelsEnabled: { openai: true, gemini: false },
+          count: 4,
+          aspect: { kind: "discrete", ratio: "1:1" },
+        });
+      return (
+        <span data-testid="c429-openai">{ctx.consecutive429Count.openai}</span>
+      );
+    }
+
+    render(
+      <RoundProvider>
+        <StartConsumer />
+      </RoundProvider>,
+    );
+
+    await act(async () => {
+      triggerStart!();
+    });
+
+    await act(async () => {
+      capturedOnSlotUpdate!({
+        provider: "openai",
+        index: 0,
+        result: {
+          status: "error",
+          error: { kind: "rate_limited", message: "Too fast" },
+        },
+      });
+    });
+
+    expect(screen.getByTestId("c429-openai").textContent).toBe("1");
+
+    await act(async () => {
+      capturedOnSlotUpdate!({
+        provider: "openai",
+        index: 1,
+        result: {
+          status: "success",
+          bytes: new ArrayBuffer(1),
+          thumbnail: new ArrayBuffer(1),
+          mimeType: "image/png",
+          meta: {},
+        },
+      });
+    });
+
+    expect(screen.getByTestId("c429-openai").textContent).toBe("0");
+  });
+
+  it("per-provider isolation: OpenAI 429 does not affect Gemini count", async () => {
+    const round = makeLoadingRound(1, 1);
+    let capturedOnSlotUpdate: ((u: SlotUpdate) => void) | null = null;
+
+    mockStartRoundOne.mockResolvedValue({ round, sessionId: "s1" });
+    mockFanOut.mockImplementation(async (opts: { onSlotUpdate: (u: SlotUpdate) => void }) => {
+      capturedOnSlotUpdate = opts.onSlotUpdate;
+      return { ...round, settledAt: new Date().toISOString() };
+    });
+
+    let triggerStart: (() => void) | null = null;
+    function StartConsumer() {
+      const ctx = useRound();
+      triggerStart = () =>
+        ctx.startRound({
+          prompt: "test",
+          modelsEnabled: { openai: true, gemini: true },
+          count: 4,
+          aspect: { kind: "discrete", ratio: "1:1" },
+        });
+      return (
+        <div>
+          <span data-testid="c429-openai">{ctx.consecutive429Count.openai}</span>
+          <span data-testid="c429-gemini">{ctx.consecutive429Count.gemini}</span>
+        </div>
+      );
+    }
+
+    render(
+      <RoundProvider>
+        <StartConsumer />
+      </RoundProvider>,
+    );
+
+    await act(async () => {
+      triggerStart!();
+    });
+
+    await act(async () => {
+      capturedOnSlotUpdate!({
+        provider: "openai",
+        index: 0,
+        result: {
+          status: "error",
+          error: { kind: "rate_limited", message: "Too fast" },
+        },
+      });
+    });
+
+    expect(screen.getByTestId("c429-openai").textContent).toBe("1");
+    expect(screen.getByTestId("c429-gemini").textContent).toBe("0");
   });
 });
