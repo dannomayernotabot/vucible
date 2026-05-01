@@ -7,16 +7,18 @@ import { WizardShell } from "./WizardShell";
 
 vi.mock("@/lib/providers/openai", () => ({
   testGenerate: vi.fn(),
+  listImageModels: vi.fn(),
 }));
 
 vi.mock("@/lib/providers/gemini", () => ({
   listModels: vi.fn(),
 }));
 
-import { testGenerate } from "@/lib/providers/openai";
+import { testGenerate, listImageModels } from "@/lib/providers/openai";
 import { listModels } from "@/lib/providers/gemini";
 
 const mockTestGenerate = testGenerate as ReturnType<typeof vi.fn>;
+const mockListImageModels = listImageModels as ReturnType<typeof vi.fn>;
 const mockListModels = listModels as ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
@@ -35,6 +37,10 @@ describe("wizard happy path", () => {
       tier: "tier2",
       ipm: 20,
     });
+    mockListImageModels.mockResolvedValue({
+      ok: true,
+      models: ["gpt-image-1"],
+    });
     mockListModels.mockResolvedValue({ ok: true });
 
     const onComplete = vi.fn();
@@ -43,7 +49,7 @@ describe("wizard happy path", () => {
     expect(screen.getByText("Welcome to Vucible")).toBeDefined();
     expect(screen.getByText("Step 1 of 4")).toBeDefined();
 
-    fireEvent.click(screen.getByText("Get Started →"));
+    fireEvent.click(screen.getByRole("button", { name: /Get Started/ }));
 
     expect(screen.getByText("Step 2 of 4")).toBeDefined();
     expect(screen.getByText("Connect Your API Keys")).toBeDefined();
@@ -100,7 +106,7 @@ describe("wizard sad path", () => {
     const onComplete = vi.fn();
     render(<WizardShell onComplete={onComplete} />);
 
-    fireEvent.click(screen.getByText("Get Started →"));
+    fireEvent.click(screen.getByRole("button", { name: /Get Started/ }));
 
     const openaiInput = screen.getByLabelText("OpenAI API Key");
     fireEvent.change(openaiInput, {
@@ -135,7 +141,7 @@ describe("wizard sad path", () => {
   it("disables Continue until a provider is validated", () => {
     render(<WizardShell onComplete={vi.fn()} />);
 
-    fireEvent.click(screen.getByText("Get Started →"));
+    fireEvent.click(screen.getByRole("button", { name: /Get Started/ }));
 
     const nextButton = screen.getByText("Next →");
     expect(nextButton.hasAttribute("disabled")).toBe(true);

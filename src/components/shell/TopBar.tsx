@@ -10,10 +10,12 @@ interface TopBarProps {
 
 export function TopBar({ onToggleHistory }: TopBarProps) {
   return (
-    <header className="flex h-14 shrink-0 items-center justify-between border-b px-4">
-      <span className="text-lg font-semibold tracking-tight">vucible</span>
+    <header className="flex h-14 shrink-0 items-center justify-between border-b border-border/60 px-4 backdrop-blur-sm sm:h-16 sm:px-6">
+      <span className="text-sm font-semibold uppercase tracking-[0.12em] text-foreground/80">
+        vucible
+      </span>
 
-      <div className="flex items-center gap-1">
+      <div className="flex items-center gap-0.5 sm:gap-1">
         <Button
           variant="ghost"
           size="icon"

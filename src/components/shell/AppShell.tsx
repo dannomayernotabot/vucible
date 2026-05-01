@@ -38,7 +38,7 @@ export function AppShell({ children }: AppShellProps) {
 
   return (
     <ThemeProvider>
-      <div className="flex min-h-screen flex-col">
+      <div className="flex min-h-screen flex-col" style={{ paddingTop: "env(safe-area-inset-top)", paddingBottom: "env(safe-area-inset-bottom)" }}>
         <TopBar onToggleHistory={toggleHistory} />
         <div className="flex flex-1 overflow-hidden">
           <HistoryErrorBoundary>

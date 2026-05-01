@@ -1,6 +1,6 @@
 "use client";
 
-import { useReducer, useEffect, useRef, useCallback } from "react";
+import { useReducer, useEffect, useRef, useCallback, Fragment } from "react";
 import { wizardReducer, initialState } from "@/lib/wizard/machine";
 import type { WizardAction } from "@/lib/wizard/machine";
 import { getProgress, setProgress, clearProgress } from "@/lib/storage/wizard-progress";
@@ -15,6 +15,50 @@ import { WizardErrorBoundary } from "./WizardErrorBoundary";
 
 interface WizardShellProps {
   onComplete: () => void;
+}
+
+const STEP_COUNT = 4;
+
+function StepIndicator({ current }: { current: number }) {
+  return (
+    <nav aria-label="Wizard progress" className="flex items-center gap-0">
+      {Array.from({ length: STEP_COUNT }, (_, i) => {
+        const step = i + 1;
+        const done = step < current;
+        const active = step === current;
+        return (
+          <Fragment key={step}>
+            {i > 0 && (
+              <div
+                className="h-px w-8 sm:w-12 transition-colors"
+                style={{
+                  backgroundColor: done
+                    ? "var(--primary)"
+                    : "var(--border)",
+                  transitionDuration: "var(--duration-base)",
+                }}
+              />
+            )}
+            <div
+              aria-current={active ? "step" : undefined}
+              className="rounded-full transition-all"
+              style={{
+                width: active ? 10 : 8,
+                height: active ? 10 : 8,
+                backgroundColor: done || active
+                  ? "var(--primary)"
+                  : "var(--border)",
+                boxShadow: active
+                  ? "0 0 0 4px var(--brand-100)"
+                  : "none",
+                transitionDuration: "var(--duration-base)",
+              }}
+            />
+          </Fragment>
+        );
+      })}
+    </nav>
+  );
 }
 
 export function WizardShell({ onComplete }: WizardShellProps) {
@@ -92,18 +136,25 @@ export function WizardShell({ onComplete }: WizardShellProps) {
   return (
     <WizardErrorBoundary>
       <WizardContext value={{ state, dispatch }}>
-        <div className="mx-auto flex min-h-screen max-w-lg flex-col items-center justify-center p-6">
-          <p className="mb-4 text-sm text-muted-foreground">{stepLabel}</p>
-          <div className="w-full">
-            {state.step === 1 && <StepIntro />}
-            {state.step === 2 && <StepKeys />}
-            {state.step === 3 && <StepDefaults />}
-            {state.step === 4 && <StepConfirm />}
+        <div className="wizard-backdrop flex min-h-screen flex-col">
+          <div className="flex flex-col items-center pt-10 md:pt-14">
+            <span className="mb-8 text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+              Vucible
+            </span>
+            <StepIndicator current={state.step} />
+            <span className="sr-only">{stepLabel}</span>
+          </div>
+
+          <div className="flex flex-1 items-center justify-center px-5 py-8 sm:px-8">
+            <div className="w-full max-w-xl animate-fade-in-up">
+              {state.step === 1 && <StepIntro />}
+              {state.step === 2 && <StepKeys />}
+              {state.step === 3 && <StepDefaults />}
+              {state.step === 4 && <StepConfirm />}
+            </div>
           </div>
         </div>
       </WizardContext>
     </WizardErrorBoundary>
   );
 }
-
-

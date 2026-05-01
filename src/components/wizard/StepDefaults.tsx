@@ -25,12 +25,16 @@ export function StepDefaults() {
     }));
 
   return (
-    <div className="space-y-6">
-      <h2 className="text-xl font-semibold">{WIZARD_COPY.step3.header}</h2>
+    <div className="space-y-8">
+      <div>
+        <h2 className="text-2xl font-semibold tracking-tight sm:text-3xl">
+          {WIZARD_COPY.step3.header}
+        </h2>
+      </div>
 
-      <div className="space-y-4">
+      <div className="space-y-6">
         <div>
-          <label className="mb-1.5 block text-sm font-medium">
+          <label className="mb-2 block text-sm font-medium">
             {WIZARD_COPY.step3.imageCount.label}
           </label>
           <ImageCountPicker
@@ -43,7 +47,7 @@ export function StepDefaults() {
         </div>
 
         <div>
-          <label className="mb-1.5 block text-sm font-medium">
+          <label className="mb-2 block text-sm font-medium">
             {WIZARD_COPY.step3.aspectRatio.label}
           </label>
           <AspectRatioPicker
@@ -56,15 +60,19 @@ export function StepDefaults() {
         </div>
       </div>
 
-      <div className="flex justify-between">
+      <div className="flex items-center justify-between pt-2">
         <Button
           variant="ghost"
+          className="h-11 px-5"
           onClick={() => dispatch({ type: "set-step", step: 2 })}
         >
           Back
         </Button>
-        <Button onClick={() => dispatch({ type: "set-step", step: 4 })}>
-          {WIZARD_COPY.step3.cta} →
+        <Button
+          className="h-11 px-6"
+          onClick={() => dispatch({ type: "set-step", step: 4 })}
+        >
+          {WIZARD_COPY.step3.cta} &rarr;
         </Button>
       </div>
     </div>

@@ -33,6 +33,7 @@ import { resetDbSingleton } from "@/lib/storage/history";
 vi.mock("@/lib/providers/openai", () => ({
   testGenerate: vi.fn(),
   generate: vi.fn(),
+  listImageModels: vi.fn(),
 }));
 
 vi.mock("@/lib/providers/gemini", () => ({
@@ -92,13 +93,14 @@ vi.mock("@/lib/round/image-cache", () => {
   };
 });
 
-import { testGenerate } from "@/lib/providers/openai";
+import { testGenerate, listImageModels } from "@/lib/providers/openai";
 import {
   generate as openaiGenerate,
 } from "@/lib/providers/openai";
 import { listModels, generate as geminiGenerate } from "@/lib/providers/gemini";
 
 const mockTestGenerate = vi.mocked(testGenerate);
+const mockListImageModels = vi.mocked(listImageModels);
 const mockListModels = vi.mocked(listModels);
 const mockOpenaiGenerate = vi.mocked(openaiGenerate);
 const mockGeminiGenerate = vi.mocked(geminiGenerate);
@@ -120,6 +122,7 @@ beforeEach(async () => {
   localStorage.clear();
   await resetDbSingleton();
   mockTestGenerate.mockReset();
+  mockListImageModels.mockReset();
   mockListModels.mockReset();
   mockOpenaiGenerate.mockReset();
   mockGeminiGenerate.mockReset();
@@ -152,6 +155,10 @@ describe("full-flow E2E", () => {
         tier: "tier2",
         ipm: 20,
       });
+      mockListImageModels.mockResolvedValue({
+        ok: true,
+        models: ["gpt-image-1"],
+      });
       mockListModels.mockResolvedValue({ ok: true });
 
       const onComplete = vi.fn();
@@ -163,7 +170,7 @@ describe("full-flow E2E", () => {
 
       // ── Step 2: Complete wizard ──
       log(2, "navigating wizard: intro → keys → defaults → confirm");
-      fireEvent.click(screen.getByText("Get Started →"));
+      fireEvent.click(screen.getByRole("button", { name: /Get Started/ }));
 
       const openaiInput = screen.getByLabelText("OpenAI API Key");
       fireEvent.change(openaiInput, {

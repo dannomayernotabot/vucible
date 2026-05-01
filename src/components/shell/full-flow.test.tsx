@@ -44,6 +44,7 @@ vi.mock("@/lib/round/throttle", () => {
 vi.mock("@/lib/providers/openai", () => ({
   testGenerate: vi.fn(),
   generate: vi.fn(),
+  listImageModels: vi.fn(),
 }));
 
 vi.mock("@/lib/providers/gemini", () => ({
@@ -64,7 +65,7 @@ vi.mock("@/lib/storage/history", async () => {
 });
 
 import { startRoundOne, startRoundN, fanOut } from "@/lib/round/orchestrate";
-import { testGenerate } from "@/lib/providers/openai";
+import { testGenerate, listImageModels } from "@/lib/providers/openai";
 import { listModels } from "@/lib/providers/gemini";
 import { listSessions } from "@/lib/storage/history";
 import { resetDbSingleton } from "@/lib/storage/history";
@@ -170,6 +171,7 @@ beforeEach(async () => {
   vi.mocked(startRoundN).mockReset();
   vi.mocked(fanOut).mockReset();
   vi.mocked(testGenerate).mockReset();
+  vi.mocked(listImageModels).mockReset();
   vi.mocked(listModels).mockReset();
 });
 
@@ -182,13 +184,14 @@ describe("full flow: wizard → round 1 → round 2 → settings → history cle
     step(1, "empty localStorage → wizard renders");
     const onComplete = vi.fn();
     vi.mocked(testGenerate).mockResolvedValue({ ok: true, tier: "tier2", ipm: 20 });
+    vi.mocked(listImageModels).mockResolvedValue({ ok: true, models: ["gpt-image-1"] });
     vi.mocked(listModels).mockResolvedValue({ ok: true });
 
     render(<WizardShell onComplete={onComplete} />);
 
     expect(screen.getByText("Welcome to Vucible")).toBeDefined();
     step(2, "click Get Started → step 2");
-    fireEvent.click(screen.getByText("Get Started →"));
+    fireEvent.click(screen.getByRole("button", { name: /Get Started/ }));
 
     step(3, "paste OpenAI key and validate");
     const openaiInput = screen.getByLabelText("OpenAI API Key");
